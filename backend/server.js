@@ -93,14 +93,19 @@ app.get('/api/messages', (req, res) => {
   res.json(messages);
 });
 
-// POST /api/sync - manually trigger a sync
-app.post('/api/sync', async (req, res) => {
-  try {
-    const result = await runSync(true);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+// POST /api/sync - manually trigger a sync (responds immediately, runs in background)
+app.post('/api/sync', (req, res) => {
+  const { isSyncing } = getSyncStatus();
+  res.json({ started: true, alreadyRunning: isSyncing });
+  if (!isSyncing) {
+    runSync(true).catch(err => console.error('[Sync] Manual sync error:', err.message));
   }
+});
+
+// GET /api/sync/status - poll to check if a background sync is still running
+app.get('/api/sync/status', (req, res) => {
+  const status = getSyncStatus();
+  res.json({ running: status.isSyncing, lastSyncTime: status.lastSyncTime });
 });
 
 // GET /api/summary
@@ -240,15 +245,30 @@ app.patch('/api/follow-ups/:id/restore', (req, res) => {
   followUpOps.restore(parseInt(req.params.id));
   res.json(allLists());
 });
-// PATCH /api/follow-ups/:id/confirm - candidate → open
+// PATCH /api/follow-ups/:id/confirm - candidate → open (or finished if pre_resolved)
 app.patch('/api/follow-ups/:id/confirm', (req, res) => {
-  followUpOps.confirm(parseInt(req.params.id));
+  const id = parseInt(req.params.id);
+  const task = db.prepare('SELECT pre_resolved FROM follow_ups WHERE id = ?').get(id);
+  if (task?.pre_resolved) {
+    followUpOps.confirmAsResolved(id);
+  } else {
+    followUpOps.confirm(id);
+  }
   res.json(allLists());
 });
 // DELETE /api/follow-ups/:id - soft delete (dismiss)
 app.delete('/api/follow-ups/:id', (req, res) => {
   followUpOps.delete(parseInt(req.params.id));
   res.json(allLists());
+});
+
+// PATCH /api/follow-ups/:id/priority - update priority
+app.patch('/api/follow-ups/:id/priority', (req, res) => {
+  const { priority } = req.body;
+  const valid = ['low', 'medium', 'high', 'critical'];
+  if (!valid.includes(priority)) return res.status(400).json({ error: 'invalid priority' });
+  followUpOps.updatePriority(parseInt(req.params.id), priority);
+  res.json({ ok: true });
 });
 
 // GET /api/summary/generate — SSE streaming endpoint (frontend connects via EventSource)
@@ -291,6 +311,52 @@ app.post('/api/standup/generate', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// POST /api/standup/clarify — Claude decides which tasks need more context and generates targeted questions
+app.post('/api/standup/clarify', async (req, res) => {
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set' });
+    const { tasks = [] } = req.body;
+    if (!tasks.length) return res.json({ clarifications: [] });
+
+    const taskLines = tasks.map((t, i) => {
+      const msgs = (() => { try { return JSON.parse(t.source_messages || '[]') } catch { return [] } })();
+      const msgSummary = msgs.slice(0, 3).map(m => typeof m === 'string' ? m : (m.text || '')).filter(Boolean).join(' | ');
+      return `[${i}] ID:${t.id} | "${t.text}" | context: ${t.context || 'none'} | status: ${t.status} | messages: ${msgSummary || 'none'}`;
+    }).join('\n');
+
+    const prompt = `You are helping Alon Katz prepare a stand-up brief for his boss Tomer. For each task below, decide if a person reading this would know exactly what happened and what to report. If yes — skip it. If no — write ONE specific question to ask Alon.
+
+Note: if a task mentions "Tomer", that refers to the boss this brief is being sent to — keep that in mind when generating questions.
+
+Only include tasks where the task description and context are genuinely unclear or incomplete for a stand-up. Do NOT ask about tasks that are self-explanatory.
+
+Respond ONLY with a JSON array (no markdown, no explanation):
+[{ "taskId": <number>, "taskText": "...", "question": "..." }]
+
+If all tasks are clear, respond with: []
+
+Tasks:
+${taskLines}`;
+
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const raw = response.content[0]?.text?.trim() || '[]';
+    // Strip markdown code fences if Claude wrapped it
+    const json = raw.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
+    const clarifications = JSON.parse(json);
+    res.json({ clarifications: Array.isArray(clarifications) ? clarifications : [] });
+  } catch (err) {
+    console.error('[standup/clarify]', err);
+    res.json({ clarifications: [] }); // fail open — skip clarification step on error
+  }
+});
+
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -401,31 +467,43 @@ app.post('/api/status-report/summary', async (req, res) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set' });
-    const { tasksByBoard = {}, completedToday = [], tasks = [] } = req.body;
+    const { tasksByBoard = {}, completedToday = [], tasks = [], clarifications = [] } = req.body;
 
     let prompt;
 
     if (tasks.length > 0) {
-      // Standup page: flat array of completed follow-up tasks
+      // Standup page: flat array of follow-up tasks
       const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2 };
       const sorted = [...tasks].sort((a, b) =>
         (PRIORITY_ORDER[a.priority?.toLowerCase()] ?? 3) - (PRIORITY_ORDER[b.priority?.toLowerCase()] ?? 3)
       );
-      const lines = sorted.map(t =>
-        `- ${t.text}${t.channel_name ? ` (from #${t.channel_name})` : ''}`
-      );
-      prompt = `You are Alon Katz, a creative studio manager. Write a brief end-of-day update to your boss summarizing what you accomplished today.
+      const lines = sorted.map(t => {
+        const statusLabel = t.status === 'in_progress' ? ' [In Progress]' : ' [Done]';
+        const clarification = (clarifications || []).find(c => c.taskId === t.id && c.answer);
+        const extra = clarification ? `\n  Additional context: ${clarification.answer}` : '';
+        return `- ${t.text}${t.channel_name ? ` (from #${t.channel_name})` : ''}${statusLabel}${extra}`;
+      });
+      const inProgressCount = tasks.filter(t => t.status === 'in_progress').length;
+      const doneCount = tasks.filter(t => t.status !== 'in_progress').length;
+      prompt = `You are Alon Katz, a creative studio manager. Write a brief stand-up update addressed to your boss Tomer.
 
-Write it as a clean bullet list in first person (e.g. "I completed…", "I sent…", "I followed up on…"). 
+Note: if any task mentions "Tomer" by name, that means it directly involves your boss — frame it appropriately (e.g. "following up with you", "waiting on your feedback", etc.).
+
+${doneCount > 0 ? 'Completed tasks are marked [Done]. ' : ''}${inProgressCount > 0 ? 'Tasks currently in progress are marked [In Progress] — mention these as ongoing work.' : ''}
+
+Write it as a clean bullet list in first person (e.g. "I completed…", "I'm working on…", "I followed up on…").
 - Do NOT mention priority levels
 - Do NOT use section headers
 - Keep each bullet to one sentence, natural and direct
 - Sound like a human reporting in, not a system log
+- Use any "Additional context" provided to add specific detail
+- Put a blank line between each bullet
 
-Tasks completed today:
+Tasks:
 ${lines.join('\n')}
 
 Update:`;
+
     } else {
       // Status Report page: tasks by board (open items)
       const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2 };

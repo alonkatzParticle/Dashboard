@@ -329,7 +329,7 @@ function processResult(result, allMessages) {
   const currentKeys = new Set([
     ...followUpOps.getOpenTexts().map(f => f.text.toLowerCase().trim()),
     ...followUpOps.getCandidateTexts().map(t => t.toLowerCase().trim()),
-    ...followUpOps.getAllFinishedTexts().map(t => t.toLowerCase().trim())
+    ...followUpOps.getRecentFinishedTexts().map(t => t.toLowerCase().trim())
   ]);
 
   for (const r of (result.resolved_follow_ups || [])) {
@@ -344,9 +344,9 @@ function processResult(result, allMessages) {
   for (const item of (result.new_follow_ups || [])) {
     const key = item.text.toLowerCase().trim();
     if (currentKeys.has(key)) { console.log(`[Claude]   ~ Deduped: ${item.text.slice(0,60)}`); continue; }
-    followUpOps.insert({ ...item, source: 'claude', source_messages: indicesToMessages(item.source_indices) });
+    followUpOps.insertCandidate({ ...item, source: 'claude', source_messages: indicesToMessages(item.source_indices) });
     currentKeys.add(key);
-    console.log(`[Claude]   + Task: ${item.text.slice(0,80)}`);
+    console.log(`[Claude]   + Candidate (new): ${item.text.slice(0,80)}`);
     stats.added++;
   }
 
@@ -354,15 +354,15 @@ function processResult(result, allMessages) {
     const key = item.text.toLowerCase().trim();
     if (currentKeys.has(key)) { console.log(`[Claude]   ~ Deduped completed: ${item.text.slice(0,60)}`); continue; }
     const resolvedAt = indicesToDate(item.evidence_indices) || indicesToDate(item.source_indices);
-    followUpOps.insertFinished({
+    followUpOps.insertCandidate({
       ...item,
       source: 'claude',
       source_messages: indicesToMessages(item.source_indices),
+      preResolved: true,
       resolution_evidence: JSON.stringify(indicesToMessages(item.evidence_indices) || []),
-      resolvedAt
     });
     currentKeys.add(key);
-    console.log(`[Claude]   ✓ Completed: ${item.text.slice(0,80)}`);
+    console.log(`[Claude]   ~ Candidate (pre-resolved): ${item.text.slice(0,80)}`);
     stats.completed++;
   }
 

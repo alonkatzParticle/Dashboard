@@ -52,32 +52,32 @@ async function runSync(isManual = false) {
     const channels = channelOps.getAll();
     console.log(`[Poller] Syncing ${channels.length} channels`);
 
-    for (const channel of channels) {
-      try {
-        const state = syncOps.get(channel.channel_id);
-        const weekStartTs = getWeekStartTs();
-        const oldestTs = state?.last_fetched_ts || weekStartTs;
+    const BATCH = 5 // parallel Slack API calls at once — safe under Tier 3 limits
+    for (let i = 0; i < channels.length; i += BATCH) {
+      const batch = channels.slice(i, i + BATCH)
+      await Promise.all(batch.map(async (channel) => {
+        try {
+          const state = syncOps.get(channel.channel_id)
+          const weekStartTs = getWeekStartTs()
+          const oldestTs = state?.last_fetched_ts || weekStartTs
 
-        if (oldestTs >= nowTs) {
-          continue; // Already up to date
+          if (oldestTs >= nowTs) return // already up to date
+
+          const messages = await fetchMessages(channel.channel_id, oldestTs, nowTs)
+          syncOps.update(channel.channel_id, nowTs, messages.length)
+
+          totalMessages += messages.length
+          channelsSynced++
+
+          if (messages.length > 0) {
+            console.log(`[Poller] ${channel.name}: fetched ${messages.length} messages`)
+          }
+        } catch (err) {
+          console.error(`[Poller] Error syncing channel ${channel.name}:`, err.message)
         }
-
-        const messages = await fetchMessages(channel.channel_id, oldestTs, nowTs);
-        syncOps.update(channel.channel_id, nowTs, messages.length);
-
-        totalMessages += messages.length;
-        channelsSynced++;
-
-        if (messages.length > 0) {
-          console.log(`[Poller] ${channel.name}: fetched ${messages.length} messages`);
-        }
-
-        // Small delay to respect rate limits
-        await new Promise(r => setTimeout(r, 100));
-      } catch (err) {
-        console.error(`[Poller] Error syncing channel ${channel.name}:`, err.message);
-      }
+      }))
     }
+
 
     syncLogOps.complete(logId, channelsSynced, totalMessages);
     lastSyncTime = new Date().toISOString();

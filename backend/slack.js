@@ -81,7 +81,8 @@ async function slackGet(endpoint, params = {}) {
   const token = await getValidToken();
   const response = await axios.get(`${SLACK_API}/${endpoint}`, {
     headers: { Authorization: `Bearer ${token}` },
-    params
+    params,
+    timeout: 30000  // 30s — prevents a hung Slack call from freezing the whole sync
   });
 
   if (!response.data.ok) {

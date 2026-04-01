@@ -96,7 +96,7 @@
     --accent: #2d2d31;
     --accent-foreground: #f0f0f3;
     --destructive: #e05a4e;
-    --border: rgba(255,255,255,0.08);
+    --border: rgba(255,255,255,0.12);
     --input: rgba(255,255,255,0.09);
     --ring: rgba(80,128,240,0.45);
     --sidebar: #1b1b1e;
@@ -115,14 +115,14 @@
   }
   html {
     @apply font-sans;
-    font-size: 17px;
+    font-size: 15px;
   }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-size: 17px;
+    font-size: 15px;
     line-height: 1.65;
   }
 }

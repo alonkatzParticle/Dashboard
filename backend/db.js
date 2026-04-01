@@ -112,6 +112,7 @@ try { db.exec("ALTER TABLE follow_ups ADD COLUMN priority TEXT DEFAULT 'medium'"
 try { db.exec("ALTER TABLE follow_ups ADD COLUMN task_type TEXT DEFAULT 'task'"); } catch (_) {}
 try { db.exec("ALTER TABLE follow_ups ADD COLUMN direction TEXT DEFAULT 'inbound'"); } catch (_) {}
 try { db.exec("ALTER TABLE daily_summaries ADD COLUMN standup_text TEXT"); } catch (_) {}
+try { db.exec('ALTER TABLE follow_ups ADD COLUMN pre_resolved INTEGER DEFAULT 0'); } catch (_) {}
 
 // ── Monday.com integration tables ────────────────────────────────────────────
 db.exec(`
@@ -333,13 +334,18 @@ const followUpOps = {
   },
   insertCandidate: (item) => {
     return db.prepare(`
-      INSERT INTO follow_ups (text, channel_id, channel_name, message_ts, context, status, source, priority, task_type, source_messages, created_at)
-      VALUES (?, ?, ?, ?, ?, 'candidate', ?, ?, ?, ?, ?)
+      INSERT INTO follow_ups (text, channel_id, channel_name, message_ts, context, status, source, priority, task_type, source_messages, pre_resolved, created_at)
+      VALUES (?, ?, ?, ?, ?, 'candidate', ?, ?, ?, ?, ?, ?)
     `).run(item.text, item.channel_id || null, item.channel_name || null, item.message_ts || null,
       item.context || null, item.source || 'claude',
       item.priority || 'medium', item.task_type || 'task',
       item.source_messages ? JSON.stringify(item.source_messages) : null,
+      item.preResolved ? 1 : 0,
       new Date().toISOString());
+  },
+  confirmAsResolved: (id) => {
+    const now = new Date().toISOString();
+    db.prepare("UPDATE follow_ups SET status = 'finished', resolved_at = ?, resolved_by = 'user' WHERE id = ?").run(now, id);
   },
   insertFinished: (item) => {
     const now = new Date().toISOString();
@@ -376,6 +382,9 @@ const followUpOps = {
   restore: (id) => {
     // Bring a dismissed task back to open
     db.prepare("UPDATE follow_ups SET status = 'open', resolved_at = NULL, resolved_by = NULL WHERE id = ?").run(id);
+  },
+  updatePriority: (id, priority) => {
+    db.prepare("UPDATE follow_ups SET priority = ? WHERE id = ?").run(priority, id);
   },
   clearCandidates: () => {
     // Wipe all candidates — called on force-refresh so the Review tab reflects only the latest run
