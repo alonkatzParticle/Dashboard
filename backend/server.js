@@ -849,6 +849,48 @@ app.post('/api/dropbox/upload-link', async (req, res) => {
   }
 });
 
+// POST /api/dropbox/copy — copy a Dropbox file into the member's weekly folder
+app.post('/api/dropbox/copy', async (req, res) => {
+  try {
+    const { filePath, sharedUrl, fileName, weekEnding, memberName } = req.body;
+    if ((!filePath && !sharedUrl) || !fileName || !weekEnding || !memberName)
+      return res.status(400).json({ error: 'Missing required fields' });
+    const token = await getDropboxToken();
+    const basePath = (process.env.DROPBOX_PATH ?? '/Weekly Reports').replace(/\/$/, '');
+    const folder = weekFolder(weekEnding);
+    const toPath = `${basePath}/${folder}/${memberName}/${fileName}`;
+
+    // Own-account file: use server-side copy (no data transfer)
+    if (filePath) {
+      const copyRes = await fetch('https://api.dropboxapi.com/2/files/copy_v2', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_path: filePath, to_path: toPath, autorename: true }),
+      });
+      if (!copyRes.ok) return res.status(500).json({ error: `Copy failed: ${await copyRes.text()}` });
+      const data = await copyRes.json();
+      return res.json({ success: true, path: data.metadata?.path_lower });
+    }
+
+    // Cross-account: download via shared link then upload
+    const relPath = fileName.startsWith('/') ? fileName : `/${fileName}`;
+    const downloadRes = await fetch('https://content.dropboxapi.com/2/sharing/get_shared_link_file', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Dropbox-API-Arg': encodeDropboxArg({ url: sharedUrl, path: relPath }) },
+    });
+    if (!downloadRes.ok) return res.status(500).json({ error: `Download failed: ${await downloadRes.text()}` });
+    const fileBuffer = await downloadRes.arrayBuffer();
+    const uploadRes = await fetch('https://content.dropboxapi.com/2/files/upload', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': encodeDropboxArg({ path: toPath, mode: 'add', autorename: true }) },
+      body: Buffer.from(fileBuffer),
+    });
+    if (!uploadRes.ok) return res.status(500).json({ error: `Upload failed: ${await uploadRes.text()}` });
+    const data = await uploadRes.json();
+    return res.json({ success: true, path: data.path_lower });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST /api/dropbox/delete — delete a file from Dropbox by path
 app.post('/api/dropbox/delete', async (req, res) => {
   try {

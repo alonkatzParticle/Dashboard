@@ -1128,10 +1128,13 @@ function useBackgroundSync(onSync, intervalMs = 60000) {
 }
 
 // -- Dropbox Preview Modal
-function DropboxPreviewModal({ task, onClose }) {
+function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selected, setSelected] = useState(new Set())
+  const [copying, setCopying] = useState(false)
+  const [copied, setCopied] = useState(new Set())
   const [lightbox, setLightbox] = useState(null)
 
   useEffect(() => {
@@ -1144,9 +1147,36 @@ function DropboxPreviewModal({ task, onClose }) {
       .finally(() => setLoading(false))
   }, [task.dropbox_link])
 
-  const media = files.filter(f => f.is_image || f.is_video)
-  const lbIdx = lightbox ? media.findIndex(f => f.name === lightbox.name) : -1
-  // Own-account: use path_lower directly. Cross-account (path_lower null): use url+name
+  const mediaFiles = files.filter(f => f.is_image || f.is_video)
+  const lbIdx = lightbox ? mediaFiles.findIndex(f => f.name === lightbox.name) : -1
+
+  const toggleSelect = (name) => setSelected(prev => {
+    const next = new Set(prev); next.has(name) ? next.delete(name) : next.add(name); return next
+  })
+
+  const addToWeekly = async () => {
+    if (copying || selected.size === 0) return
+    setCopying(true)
+    const toAdd = files.filter(f => selected.has(f.name))
+    const newlyCopied = new Set(copied)
+    for (const file of toAdd) {
+      try {
+        const res = await fetch('/api/dropbox/copy', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filePath: file.path_lower ?? null,
+            sharedUrl: file.path_lower ? null : task.dropbox_link,
+            fileName: file.name, weekEnding, memberName,
+          }),
+        })
+        const data = await res.json()
+        if (!data.success) throw new Error(data.error)
+        newlyCopied.add(file.name)
+      } catch (e) { alert(`Failed to copy ${file.name}: ${e}`) }
+    }
+    setCopied(newlyCopied); setSelected(new Set()); setCopying(false)
+  }
+
   const thumbUrl = f =>
     f.path_lower
       ? `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}`
@@ -1165,7 +1195,7 @@ function DropboxPreviewModal({ task, onClose }) {
             <p className="text-xs text-muted-foreground mb-0.5">Dropbox Files</p>
             <h2 className="text-sm font-semibold text-foreground leading-snug truncate">{task.name}</h2>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none p-1">x</button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none p-1">✕</button>
         </div>
         <div className="flex-1 overflow-y-auto p-5">
           {loading && (
@@ -1175,40 +1205,71 @@ function DropboxPreviewModal({ task, onClose }) {
             </div>
           )}
           {!loading && error && <p className="text-sm text-red-400 py-4">{error}</p>}
-          {!loading && !error && files.length === 0 && <p className="text-sm text-muted-foreground py-4">No files found in this folder.</p>}
+          {!loading && !error && files.length === 0 && <p className="text-sm text-muted-foreground py-4">No files found.</p>}
           {!loading && !error && files.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {files.map(file => (file.is_image || file.is_video) ? (
-                <div key={file.name} className="relative group aspect-square rounded-lg overflow-hidden border border-white/10 bg-white/5 cursor-pointer"
-                  onClick={() => setLightbox(file)}>
-                  <img src={thumbUrl(file)} alt={file.name} className="w-full h-full object-cover" />
-                  {file.is_video && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
-                        <span className="text-white text-xs">&#9654;</span>
+              {files.map(file => {
+                const isMedia = file.is_image || file.is_video
+                const isSelected = selected.has(file.name)
+                const isCopied = copied.has(file.name)
+                if (isMedia) return (
+                  <div key={file.name} className="relative group aspect-square rounded-lg overflow-hidden border border-white/10 bg-white/5">
+                    <button className="absolute inset-0 w-full h-full focus:outline-none" onClick={() => setLightbox(file)}>
+                      <img src={thumbUrl(file)} alt={file.name} className="w-full h-full object-cover" />
+                      {file.is_video && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
+                            <span className="text-white text-sm pl-0.5">▶</span>
+                          </div>
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end pointer-events-none">
+                        <p className="w-full text-white text-xs px-2 py-1 bg-black/50 translate-y-full group-hover:translate-y-0 transition-transform truncate">{file.name}</p>
                       </div>
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end pointer-events-none">
-                    <p className="w-full text-white text-xs px-2 py-1 bg-black/50 translate-y-full group-hover:translate-y-0 transition-transform truncate">{file.name}</p>
+                    </button>
+                    {!isCopied && (
+                      <button onClick={e => { e.stopPropagation(); toggleSelect(file.name) }}
+                        className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'bg-white/80 border-white/80 opacity-0 group-hover:opacity-100'}`}>
+                        {isSelected && <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                      </button>
+                    )}
+                    {isCopied && (
+                      <div className="absolute inset-0 bg-green-600/70 flex flex-col items-center justify-center gap-1 pointer-events-none">
+                        <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                        <span className="text-white text-xs font-medium">Added</span>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ) : (
-                <div key={file.name} className="rounded-lg border border-white/10 bg-white/5 aspect-square flex flex-col items-center justify-center gap-2 p-3">
-                  <span className="text-2xl">&#128196;</span>
-                  <p className="text-xs text-muted-foreground text-center line-clamp-2 break-all">{file.name}</p>
-                </div>
-              ))}
+                )
+                return (
+                  <div key={file.name} className="rounded-lg border border-white/10 bg-white/5 aspect-square flex flex-col items-center justify-center gap-2 p-3">
+                    <span className="text-2xl">📄</span>
+                    <p className="text-xs text-muted-foreground text-center line-clamp-2 break-all">{file.name}</p>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
+        {!loading && !error && mediaFiles.length > 0 && (
+          <div className="border-t border-white/10 px-5 py-3 flex items-center justify-between shrink-0">
+            <p className="text-xs text-muted-foreground">
+              {selected.size > 0 ? `${selected.size} selected` : 'Select files to add to Weekly'}
+            </p>
+            <button onClick={addToWeekly} disabled={selected.size === 0 || copying}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-40 transition-colors hover:bg-primary/80">
+              {copying && <div className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />}
+              Add to Weekly
+            </button>
+          </div>
+        )}
       </div>
       {lightbox && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90"
           onClick={e => { if (e.target === e.currentTarget) setLightbox(null) }}>
-          <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl">x</button>
-          {lbIdx > 0 && <button onClick={() => setLightbox(media[lbIdx - 1])} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">&lt;</button>}
-          {lbIdx < media.length - 1 && <button onClick={() => setLightbox(media[lbIdx + 1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">&gt;</button>}
+          <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl">✕</button>
+          {lbIdx > 0 && <button onClick={() => setLightbox(mediaFiles[lbIdx - 1])} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">‹</button>}
+          {lbIdx < mediaFiles.length - 1 && <button onClick={() => setLightbox(mediaFiles[lbIdx + 1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">›</button>}
           <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3">
             {lightbox.is_image
               ? <img src={thumbUrl(lightbox)} alt={lightbox.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
@@ -1551,7 +1612,7 @@ function WeeklyPage() {
           )}
         </>
       )}
-      {selectedTask && <DropboxPreviewModal task={selectedTask} onClose={() => setSelectedTask(null)} />}
+      {selectedTask && <DropboxPreviewModal task={selectedTask} weekEnding={dates.weekEnd} memberName={activeMember?.name ?? ''} onClose={() => setSelectedTask(null)} />}
     </div>
   )
 }
