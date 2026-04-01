@@ -1542,15 +1542,18 @@ function WeeklyPage() {
   const fetchTasks = (force = false) => {
     const validMembers = (members || []).filter(m => m.monday_user_id)
     if (validMembers.length === 0) return
-    setLoading(true)
+    if (force) setLoading(true)
     const { weekStart, weekEnd, nextWeekStart, nextWeekEnd } = dates
     fetch('/api/monday/team-tasks?week_start=' + weekStart + '&week_end=' + weekEnd + '&next_week_start=' + nextWeekStart + '&next_week_end=' + nextWeekEnd + (force ? '&force=true' : ''))
       .then(r => r.json())
       .then(data => {
+        const fromCache = data._meta?.fromCache === true
         const mapped = {}
         for (const m of validMembers)
           mapped[m.id] = { lastWeek: (data[m.monday_user_id] || {}).lastWeek || [], thisWeek: (data[m.monday_user_id] || {}).thisWeek || [], loaded: true }
         setTasksByMember(mapped)
+        // If data came from cache, kick off a background refresh after a short delay
+        if (fromCache) setTimeout(() => fetchTasks(true), 1500)
       })
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -1604,9 +1607,11 @@ function WeeklyPage() {
             <div className="space-y-6">
               <WeeklyFilesPreview memberName={activeMember.name} weekEnding={dates.weekEnd} />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <WeeklyColumn title="Last Week" tasks={memberData.lastWeek} loaded={memberData.loaded} loading={loading}
-                  onTaskClick={task => task.dropbox_link && setSelectedTask(task)} />
-                <WeeklyColumn title="This Week" tasks={memberData.thisWeek} loaded={memberData.loaded} loading={loading} />
+              <WeeklyColumn title="Last Week" tasks={memberData.lastWeek} loaded={memberData.loaded} loading={loading}
+                  onTaskClick={task => task.dropbox_link && setSelectedTask(task)}
+                  onRefresh={() => { setLoading(true); fetchTasks(true) }} />
+                <WeeklyColumn title="This Week" tasks={memberData.thisWeek} loaded={memberData.loaded} loading={loading}
+                  onRefresh={() => { setLoading(true); fetchTasks(true) }} />
               </div>
             </div>
           )}
@@ -1617,11 +1622,21 @@ function WeeklyPage() {
   )
 }
 
-function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick }) {
+function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh }) {
   return (
     <div className="rounded-xl border border-border/40 bg-card overflow-hidden flex flex-col">
-      <div className="px-4 py-3 border-b border-border/30">
+      <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between">
         <span className="text-sm font-semibold text-foreground">{title}</span>
+        {onRefresh && (
+          <button onClick={onRefresh} disabled={loading}
+            title="Refresh tasks from Monday.com"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40">
+            <svg className={"w-3 h-3 " + (loading ? 'animate-spin' : '')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Refresh
+          </button>
+        )}
       </div>
       <div className="flex-1 p-4">
         {loading && !loaded ? (

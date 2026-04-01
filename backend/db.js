@@ -137,6 +137,18 @@ db.exec(`
     fetched_at INTEGER NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS monday_tasks_cache (
+    cache_key TEXT PRIMARY KEY,
+    data_json TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS monday_tasks_cache (
+    cache_key TEXT PRIMARY KEY,
+    data_json TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS monday_ai_summaries (
     member_id INTEGER NOT NULL,
     week_ending TEXT NOT NULL,
@@ -479,6 +491,19 @@ const mondayOps = {
   setCacheMeta: (key, value) => {
     db.prepare('INSERT INTO monday_cache_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
       .run(key, value);
+  },
+
+  // Tasks cache — local-first instant loading
+  getTasksCache: (key) => {
+    const row = db.prepare('SELECT data_json, fetched_at FROM monday_tasks_cache WHERE cache_key = ?').get(key);
+    return row ? { data: JSON.parse(row.data_json), fetchedAt: row.fetched_at } : null;
+  },
+  setTasksCache: (key, data) => {
+    db.prepare(`
+      INSERT INTO monday_tasks_cache (cache_key, data_json, fetched_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(cache_key) DO UPDATE SET data_json=excluded.data_json, fetched_at=excluded.fetched_at
+    `).run(key, JSON.stringify(data), Date.now());
   },
 };
 

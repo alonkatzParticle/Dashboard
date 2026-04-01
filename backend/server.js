@@ -566,7 +566,7 @@ Completed today:\n${completedList}\n\nIn progress:\n${inProgressList}\n\nDaily U
 // Weekly Report & Studio
 // ══════════════════════════════════════════════════════════════════════════════
 
-// GET /api/monday/team-tasks — last week + this week tasks per member
+// GET /api/monday/team-tasks — local-first: returns cache immediately, refreshes in background
 app.get('/api/monday/team-tasks', async (req, res) => {
   try {
     const token = process.env.MONDAY_API_TOKEN;
@@ -575,31 +575,82 @@ app.get('/api/monday/team-tasks', async (req, res) => {
     const boardIds = mondayOps.getBoards().map(b => b.board_id);
     const members = mondayOps.getMembers().filter(m => m.monday_user_id);
     const validUserIds = members.map(m => String(m.monday_user_id));
-    if (boardIds.length === 0 || validUserIds.length === 0) return res.json({});
-    if (force === 'true') clearBoardCache();
+    if (boardIds.length === 0 || validUserIds.length === 0) return res.json({ _meta: { fromCache: false } });
 
-    // Fetch tasks for last week and this week in parallel
-    const [lastWeekByUser, thisWeekByUser] = await Promise.all([
-      fetchTeamTasks(boardIds, validUserIds, token, week_start, week_end, force === 'true'),
-      fetchTeamTasks(boardIds, validUserIds, token, next_week_start, next_week_end, force === 'true'),
-    ]);
+    const cacheKey = `tasks:${week_start}:${next_week_end}`;
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-    const result = {};
-    for (const m of members) {
-      const uid = String(m.monday_user_id);
-      const allLastWeek = (lastWeekByUser[uid] ?? []).filter(t => {
-        if (!t.timeline_end) return false;
-        return t.timeline_end >= week_start && t.timeline_end <= week_end;
-      });
-      const allThisWeek = (thisWeekByUser[uid] ?? []).filter(t => {
-        if (!t.timeline_start && !t.timeline_end) return false;
-        const start = t.timeline_start ?? t.timeline_end;
-        const end = t.timeline_end ?? t.timeline_start;
-        return end >= next_week_start && start <= next_week_end;
-      });
-      result[uid] = { lastWeek: allLastWeek, thisWeek: allThisWeek };
+    // Helper: build result from raw Monday.com data
+    const buildResult = (lastWeekByUser, thisWeekByUser) => {
+      const result = {};
+      for (const m of members) {
+        const uid = String(m.monday_user_id);
+        result[uid] = {
+          lastWeek: (lastWeekByUser[uid] ?? []).filter(t => {
+            if (!t.timeline_end) return false;
+            return t.timeline_end >= week_start && t.timeline_end <= week_end;
+          }),
+          thisWeek: (thisWeekByUser[uid] ?? []).filter(t => {
+            if (!t.timeline_start && !t.timeline_end) return false;
+            const start = t.timeline_start ?? t.timeline_end;
+            const end = t.timeline_end ?? t.timeline_start;
+            return end >= next_week_start && start <= next_week_end;
+          }),
+        };
+      }
+      return result;
+    };
+
+    // Background fetch + cache update (fire-and-forget)
+    const refreshInBackground = () => {
+      (async () => {
+        try {
+          clearBoardCache();
+          const [lastWeekByUser, thisWeekByUser] = await Promise.all([
+            fetchTeamTasks(boardIds, validUserIds, token, week_start, week_end, true),
+            fetchTeamTasks(boardIds, validUserIds, token, next_week_start, next_week_end, true),
+          ]);
+          const fresh = buildResult(lastWeekByUser, thisWeekByUser);
+          mondayOps.setTasksCache(cacheKey, fresh);
+          console.log('[monday/team-tasks] Background refresh complete for', cacheKey);
+        } catch (err) {
+          console.error('[monday/team-tasks] Background refresh failed:', err.message);
+        }
+      })();
+    };
+
+    // If force=true (Refresh button), bust cache and wait for fresh data
+    if (force === 'true') {
+      clearBoardCache();
+      const [lastWeekByUser, thisWeekByUser] = await Promise.all([
+        fetchTeamTasks(boardIds, validUserIds, token, week_start, week_end, true),
+        fetchTeamTasks(boardIds, validUserIds, token, next_week_start, next_week_end, true),
+      ]);
+      const fresh = buildResult(lastWeekByUser, thisWeekByUser);
+      mondayOps.setTasksCache(cacheKey, fresh);
+      return res.json({ ...fresh, _meta: { fromCache: false, fetchedAt: Date.now() } });
     }
-    res.json(result);
+
+    // Check SQLite cache
+    const cached = mondayOps.getTasksCache(cacheKey);
+    const isStale = !cached || (Date.now() - cached.fetchedAt > CACHE_TTL);
+
+    if (cached) {
+      // Return cache immediately
+      res.json({ ...cached.data, _meta: { fromCache: true, fetchedAt: cached.fetchedAt } });
+      // Kick off background refresh if stale
+      if (isStale) refreshInBackground();
+      return;
+    }
+
+    // No cache — fetch synchronously, store, return
+    const [lastWeekByUser, thisWeekByUser] = await Promise.all([
+      fetchTeamTasks(boardIds, validUserIds, token, week_start, week_end, false),
+      fetchTeamTasks(boardIds, validUserIds, token, next_week_start, next_week_end, false),
+    ]);
+    const fresh = buildResult(lastWeekByUser, thisWeekByUser);
+    mondayOps.setTasksCache(cacheKey, fresh);
+    res.json({ ...fresh, _meta: { fromCache: false, fetchedAt: Date.now() } });
   } catch (err) {
     console.error('[monday/team-tasks]', err);
     res.status(500).json({ error: err.message });
