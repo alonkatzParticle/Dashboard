@@ -1,0 +1,161 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Inter', sans-serif;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ── Light mode (fallback) ────────────────────────────────────────────────── */
+:root {
+    --background: oklch(0.98 0.004 265);
+    --foreground: oklch(0.17 0.01 265);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.17 0.01 265);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.17 0.01 265);
+    --primary: oklch(0.52 0.22 270);
+    --primary-foreground: oklch(0.98 0 0);
+    --secondary: oklch(0.94 0.005 265);
+    --secondary-foreground: oklch(0.35 0.02 265);
+    --muted: oklch(0.94 0.005 265);
+    --muted-foreground: oklch(0.52 0.01 265);
+    --accent: oklch(0.94 0.005 265);
+    --accent-foreground: oklch(0.35 0.02 265);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.88 0.008 265);
+    --input: oklch(0.88 0.008 265);
+    --ring: oklch(0.52 0.22 270);
+    --radius: 0.5rem;
+    --sidebar: oklch(0.97 0.005 265);
+    --sidebar-foreground: oklch(0.17 0.01 265);
+    --sidebar-primary: oklch(0.52 0.22 270);
+    --sidebar-primary-foreground: oklch(0.98 0 0);
+    --sidebar-accent: oklch(0.91 0.01 265);
+    --sidebar-accent-foreground: oklch(0.35 0.02 265);
+    --sidebar-border: oklch(0.88 0.008 265);
+    --sidebar-ring: oklch(0.52 0.22 270);
+}
+
+/* ── Dark mode — calibrated to reference screenshot ──────────────────────── */
+.dark {
+    --background: #1e1e22;
+    --foreground: #f0f0f3;
+    --card: #252529;
+    --card-foreground: #f0f0f3;
+    --popover: #252529;
+    --popover-foreground: #f0f0f3;
+    --primary: #5080f0;
+    --primary-foreground: #ffffff;
+    --secondary: #2d2d31;
+    --secondary-foreground: #f0f0f3;
+    --muted: #2a2a2e;
+    --muted-foreground: #9090a0;
+    --accent: #2d2d31;
+    --accent-foreground: #f0f0f3;
+    --destructive: #e05a4e;
+    --border: rgba(255,255,255,0.08);
+    --input: rgba(255,255,255,0.09);
+    --ring: rgba(80,128,240,0.45);
+    --sidebar: #1b1b1e;
+    --sidebar-foreground: #f0f0f3;
+    --sidebar-primary: #5080f0;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #2d2d31;
+    --sidebar-accent-foreground: #f0f0f3;
+    --sidebar-border: rgba(255,255,255,0.06);
+    --sidebar-ring: #5080f0;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    font-size: 17px;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 17px;
+    line-height: 1.65;
+  }
+}
+
+/* ── Priority border stripes on task cards ───────────────────────────────── */
+.priority-high   { border-left: 3px solid oklch(0.65 0.20 22); }
+.priority-medium { border-left: 3px solid oklch(0.72 0.17 70); }
+.priority-low    { border-left: 3px solid oklch(0.57 0.01 265); }
+
+/* ── Mention highlight ───────────────────────────────────────────────────── */
+.mention-highlight {
+  background: oklch(0.72 0.17 70 / 15%);
+  color: oklch(0.72 0.17 70);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 500;
+}
+
+/* ── Channel filter input ────────────────────────────────────────────────── */
+.channel-search {
+  background: oklch(1 0 0 / 5%);
+  border: 1px solid oklch(1 0 0 / 8%);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: inherit;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.channel-search:focus {
+  border-color: oklch(0.62 0.22 270 / 60%);
+}
+.channel-search::placeholder {
+  color: oklch(0.57 0.01 265);
+}

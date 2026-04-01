@@ -1,0 +1,16 @@
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+backend/.env
+*.db
+*.sqlite
+*.db-wal
+*.db-shm
+*.db-journal
+.DS_Store
+dist/
+*.log
+*.zip
+integration_export*
+integration_export_tmp/
+App_Screenshots.md
