@@ -10,9 +10,10 @@ const NAV_ALON = [
   { id: 'standup', icon: Mic,         label: 'Standup' },
 ]
 const NAV_TEAM = [
-  { id: 'weekly', icon: BarChart2, label: 'Weekly' },
-  { id: 'status', icon: Target,    label: 'Status' },
-  { id: 'studio', icon: Palette,   label: 'Studio' },
+  { id: 'weekly',   icon: BarChart2, label: 'Weekly' },
+  { id: 'status',   icon: Target,    label: 'Status' },
+  { id: 'studio',   icon: Palette,   label: 'Studio' },
+  { id: 'settings', icon: Settings,  label: 'Settings' },
 ]
 
 export function Sidebar({ status, onSync, isSyncing, onReset, isResetting, followUps }) {

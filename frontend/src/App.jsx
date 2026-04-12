@@ -6,6 +6,7 @@ import StandupPage from './pages/StandupPage'
 import WeeklyPage from './pages/WeeklyPage'
 import StatusReportPage from './pages/StatusReportPage'
 import StudioPage from './pages/StudioPage'
+import SettingsPage from './pages/SettingsPage'
 
 export default function App() {
   const [status, setStatus] = useState(null)
@@ -72,8 +73,9 @@ export default function App() {
             <Route path="/standup" element={<StandupPage />} />
             <Route path="/weekly"  element={<WeeklyPage />} />
             <Route path="/status"  element={<StatusReportPage />} />
-            <Route path="/studio"  element={<StudioPage />} />
-            <Route path="*"        element={<Navigate to="/tasks" replace />} />
+            <Route path="/studio"   element={<StudioPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*"         element={<Navigate to="/tasks" replace />} />
           </Routes>
         </main>
       </div>

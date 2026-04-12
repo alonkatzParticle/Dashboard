@@ -364,37 +364,39 @@ ${taskLines}`;
 // ══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/monday/settings
-app.get('/api/monday/settings', (req, res) => {
-  const members = mondayOps.getMembers();
-  const boards = mondayOps.getBoards();
+app.get('/api/monday/settings', async (req, res) => {
+  const members = await mondayOps.getMembers();
+  const boards = await mondayOps.getBoards();
   res.json({ members, boards });
 });
 
 // POST /api/monday/settings/members
-app.post('/api/monday/settings/members', (req, res) => {
+app.post('/api/monday/settings/members', async (req, res) => {
   const { id, name, monday_user_id, is_video_team } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
-  mondayOps.upsertMember(id || null, name, monday_user_id || '', is_video_team || false);
-  res.json({ ok: true });
+  await mondayOps.upsertMember(id || null, name, monday_user_id || '', is_video_team || false);
+  const members = await mondayOps.getMembers();
+  res.json({ ok: true, members });
 });
 
 // DELETE /api/monday/settings/members/:id
-app.delete('/api/monday/settings/members/:id', (req, res) => {
-  mondayOps.deleteMember(req.params.id);
+app.delete('/api/monday/settings/members/:id', async (req, res) => {
+  await mondayOps.deleteMember(req.params.id);
   res.json({ ok: true });
 });
 
 // POST /api/monday/settings/boards
-app.post('/api/monday/settings/boards', (req, res) => {
+app.post('/api/monday/settings/boards', async (req, res) => {
   const { board_id, label } = req.body;
   if (!board_id) return res.status(400).json({ error: 'board_id required' });
-  mondayOps.upsertBoard(board_id, label || '');
-  res.json({ ok: true });
+  await mondayOps.upsertBoard(board_id, label || '');
+  const boards = await mondayOps.getBoards();
+  res.json({ ok: true, boards });
 });
 
 // DELETE /api/monday/settings/boards/:boardId
-app.delete('/api/monday/settings/boards/:boardId', (req, res) => {
-  mondayOps.deleteBoard(req.params.boardId);
+app.delete('/api/monday/settings/boards/:boardId', async (req, res) => {
+  await mondayOps.deleteBoard(req.params.boardId);
   res.json({ ok: true });
 });
 
