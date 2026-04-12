@@ -1,7 +1,18 @@
 {
-  "outputDirectory": "dist",
-  "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index.js" }
+  "version": 2,
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
+    },
+    {
+      "src": "api/index.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/index.js" }
   ],
   "crons": [
     { "path": "/api/internal/cron-sync", "schedule": "*/15 * * * *" }
