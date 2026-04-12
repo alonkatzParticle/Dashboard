@@ -164,6 +164,11 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS kv_store (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `);
 
 // Seed team members if table is empty
@@ -537,5 +542,12 @@ const claudeStateOps = {
   }
 };
 
-module.exports = { db, tokenOps, userOps, channelOps, messageOps, syncOps, syncLogOps, followUpOps, summaryOps, claudeStateOps, mondayOps };
+// Generic key-value store (used for Frame.io tokens etc.)
+const kvOps = {
+  get: (key) => db.prepare('SELECT value FROM kv_store WHERE key = ?').get(key)?.value ?? null,
+  set: (key, value) => db.prepare('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)').run(key, value),
+  del: (key) => db.prepare('DELETE FROM kv_store WHERE key = ?').run(key),
+};
+
+module.exports = { db, tokenOps, userOps, channelOps, messageOps, syncOps, syncLogOps, followUpOps, summaryOps, claudeStateOps, mondayOps, kvOps };
 

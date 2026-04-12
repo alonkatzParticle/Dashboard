@@ -113,6 +113,7 @@ function TaskCard({ task, selected, onToggle, onDelete }) {
 export default function StandupPage() {
   const [doneTasks, setDoneTasks] = useState([])
   const [inProgressTasks, setInProgressTasks] = useState([])
+  const [openTasks, setOpenTasks] = useState([])
   const [selectedTasks, setSelectedTasks] = useState(new Set())
   const [loading, setLoading] = useState(true)
 
@@ -126,14 +127,16 @@ export default function StandupPage() {
     Promise.all([
       fetch('/api/follow-ups?status=finished').then(r => r.json()),
       fetch('/api/follow-ups?status=in_progress').then(r => r.json()),
-    ]).then(([finished, inProgress]) => {
+      fetch('/api/follow-ups?status=open').then(r => r.json()),
+    ]).then(([finished, inProgress, open]) => {
       setDoneTasks(Array.isArray(finished) ? finished : [])
       setInProgressTasks(Array.isArray(inProgress) ? inProgress : [])
+      setOpenTasks(Array.isArray(open) ? open : [])
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [])
 
-  const allTasks = [...inProgressTasks, ...doneTasks]
+  const allTasks = [...openTasks, ...inProgressTasks, ...doneTasks]
 
   const toggleTask = (id) => {
     const next = new Set(selectedTasks)
@@ -146,6 +149,7 @@ export default function StandupPage() {
     await fetch(`/api/follow-ups/${id}`, { method: 'DELETE' }).catch(() => {})
     setDoneTasks(prev => prev.filter(t => t.id !== id))
     setInProgressTasks(prev => prev.filter(t => t.id !== id))
+    setOpenTasks(prev => prev.filter(t => t.id !== id))
     setSelectedTasks(prev => { const next = new Set(prev); next.delete(id); return next })
   }
 
@@ -212,8 +216,9 @@ export default function StandupPage() {
   const groupByDay = () => {
     const groups = {}
     doneTasks.forEach(task => {
-      if (!task.resolved_at) return
-      const date = new Date(task.resolved_at)
+      const dateStr2 = task.resolved_at || task.created_at
+      if (!dateStr2) return
+      const date = new Date(dateStr2)
       const now = new Date()
       const nowDay  = new Date(now.getFullYear(),  now.getMonth(),  now.getDate())
       const taskDay = new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -256,8 +261,22 @@ export default function StandupPage() {
             <span className="text-sm text-muted-foreground">{selectedTasks.size} selected</span>
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-            {inProgressTasks.length === 0 && dayKeys.length === 0 && (
+            {openTasks.length === 0 && inProgressTasks.length === 0 && dayKeys.length === 0 && (
               <div className="text-muted-foreground/60 text-sm text-center mt-12">No tasks found.</div>
+            )}
+
+            {openTasks.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-slate-400 sticky top-0 bg-card py-1 z-10 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-slate-400 inline-block" />
+                  To Do
+                </h3>
+                <div className="space-y-2">
+                  {openTasks.map(task => (
+                    <TaskCard key={task.id} task={task} selected={selectedTasks.has(task.id)} onToggle={() => toggleTask(task.id)} onDelete={deleteTask} />
+                  ))}
+                </div>
+              </div>
             )}
 
             {inProgressTasks.length > 0 && (

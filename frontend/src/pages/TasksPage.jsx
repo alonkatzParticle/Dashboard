@@ -208,6 +208,10 @@ export default function TasksPage() {
     await fetch(`/api/follow-ups/${id}/confirm`, { method: 'PATCH' })
     fetchTasks()
   }
+  const confirmAsDone = async (id) => {
+    await fetch(`/api/follow-ups/${id}/resolve`, { method: 'PATCH' })
+    fetchTasks()
+  }
   const dismissCandidate = async (id) => {
     await fetch(`/api/follow-ups/${id}`, { method: 'DELETE' })
     fetchTasks()
@@ -304,6 +308,7 @@ export default function TasksPage() {
                             </div>
                             <div className="flex gap-2 shrink-0">
                               <button onClick={() => confirmCandidate(c.id)} className="px-3 py-1 rounded-lg bg-primary/20 hover:bg-primary/30 text-primary text-xs font-semibold transition-colors">✓ Add to Tasks</button>
+                              <button onClick={() => confirmAsDone(c.id)} className="px-3 py-1 rounded-lg bg-green-500/15 hover:bg-green-500/25 text-green-400 text-xs font-semibold transition-colors">✓ Done</button>
                               <button onClick={() => dismissCandidate(c.id)} className="px-3 py-1 rounded-lg bg-white/5 hover:bg-red-500/10 text-muted-foreground hover:text-red-400 text-xs font-semibold transition-colors">✕</button>
                             </div>
                           </div>

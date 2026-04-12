@@ -453,9 +453,87 @@ function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh })
                       </svg>
                     </a>
                   )}
+                  {task.frameio_link && fioConnected && (
+                    <button onClick={e => { e.stopPropagation(); setSelectedTask({ ...task, _fioMode: true }) }}
+                      title="Browse Frame.io files" className="text-orange-400 hover:text-orange-300 transition-colors">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── FrameioConnectModal ────────────────────────────────────────────────────────
+function FrameioConnectModal({ onClose, onConnected }) {
+  const [step, setStep] = useState('idle') // idle | opened | exchanging | done | error
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+
+  const openAuth = async () => {
+    const r = await fetch('/api/frameio/auth-url')
+    const { url } = await r.json()
+    window.open(url, '_blank')
+    setStep('opened')
+  }
+
+  const exchange = async () => {
+    if (!code.trim()) return
+    setStep('exchanging'); setError('')
+    try {
+      const r = await fetch('/api/frameio/exchange-code', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim() })
+      })
+      const data = await r.json()
+      if (!r.ok) { setError(data.error || 'Exchange failed'); setStep('opened'); return }
+      setStep('done')
+      setTimeout(onConnected, 800)
+    } catch (e) { setError(e.message); setStep('opened') }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-card border border-border/50 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Connect Frame.io</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">One-time setup — you won't need to do this again</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xl leading-none">✕</button>
+        </div>
+
+        {step === 'done' ? (
+          <div className="text-center py-4 text-green-400 font-medium">✓ Connected!</div>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-foreground">Step 1 — Authorize with Adobe</p>
+              <button onClick={openAuth}
+                className="w-full py-2.5 rounded-xl bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 text-sm font-medium transition-colors">
+                Open Adobe Login →
+              </button>
+            </div>
+            {step === 'opened' && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-foreground">Step 2 — Copy the <span className="text-orange-400">code</span> from the URL bar</p>
+                <p className="text-xs text-muted-foreground">After logging in, you'll be redirected to weekly-gray.vercel.app — copy the <code className="text-orange-300">?code=...</code> value from the URL</p>
+                <input value={code} onChange={e => setCode(e.target.value)} placeholder="Paste code here..."
+                  className="w-full bg-white/5 border border-border/40 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-orange-500/50" />
+                <button onClick={exchange} disabled={!code.trim() || step === 'exchanging'}
+                  className="w-full py-2 rounded-xl bg-primary/20 hover:bg-primary/30 text-primary text-sm font-medium disabled:opacity-40 transition-colors">
+                  {step === 'exchanging' ? 'Connecting...' : 'Complete Setup'}
+                </button>
+                {error && <p className="text-xs text-red-400">{error}</p>}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -474,12 +552,18 @@ export default function WeeklyPage() {
     sun.setDate(now.getDate() - now.getDay()); sun.setHours(0,0,0,0); return sun
   })
   const [selectedTask, setSelectedTask] = useState(null)
+  const [fioConnected, setFioConnected] = useState(null) // null=loading, false=not connected, true=connected
+  const [showFioConnect, setShowFioConnect] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/frameio/status').then(r => r.json()).then(d => setFioConnected(d.connected)).catch(() => setFioConnected(false))
+  }, [])
 
   function getWeekDates(sunday) {
     const lastSun = new Date(sunday); lastSun.setDate(sunday.getDate() - 7)
     const lastSat = new Date(lastSun); lastSat.setDate(lastSun.getDate() + 6)
     const thisSat = new Date(sunday); thisSat.setDate(sunday.getDate() + 6)
-    const fmt = d => d.toISOString().slice(0, 10)
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
     return { weekStart: fmt(lastSun), weekEnd: fmt(lastSat), nextWeekStart: fmt(sunday), nextWeekEnd: fmt(thisSat) }
   }
 
@@ -531,8 +615,30 @@ export default function WeeklyPage() {
 
   return (
     <div className="space-y-6">
+      {/* Frame.io connection banner */}
+      {fioConnected === false && (
+        <div className="flex items-center justify-between gap-3 bg-orange-500/10 border border-orange-500/30 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-orange-400 text-sm font-medium">Frame.io not connected</span>
+            <span className="text-xs text-muted-foreground">— connect to browse and copy videos to Dropbox</span>
+          </div>
+          <button onClick={() => setShowFioConnect(true)}
+            className="text-xs px-3 py-1.5 rounded-lg bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 font-medium transition-colors">
+            Connect Frame.io
+          </button>
+        </div>
+      )}
+      {showFioConnect && <FrameioConnectModal onClose={() => setShowFioConnect(false)} onConnected={() => { setFioConnected(true); setShowFioConnect(false) }} />}
       <div className="flex items-center justify-between flex-wrap gap-4">
-        <h1 className="text-2xl font-bold text-foreground">Weekly Report</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-foreground">Weekly Report</h1>
+          {fioConnected && (
+            <button onClick={() => setShowFioConnect(true)} title="Frame.io connected"
+              className="text-[11px] px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-400 font-medium hover:bg-orange-500/25 transition-colors">
+              ⬡ Frame.io
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-3 bg-white/5 border border-border/30 rounded-xl px-4 py-2.5">
           <svg className="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
@@ -577,7 +683,7 @@ export default function WeeklyPage() {
           </div>
           {activeMember && memberData && (
             <div className="space-y-6">
-              <WeeklyFilesPreview memberName={activeMember.name} weekEnding={dates.weekEnd} />
+              <WeeklyFilesPreview memberName={activeMember.name} weekEnding={dates.nextWeekEnd} />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <WeeklyColumn title="Last Week" tasks={memberData.lastWeek} loaded={memberData.loaded} loading={loading}
                   onTaskClick={task => task.dropbox_link && setSelectedTask(task)}
@@ -589,7 +695,7 @@ export default function WeeklyPage() {
           )}
         </>
       )}
-      {selectedTask && <DropboxPreviewModal task={selectedTask} weekEnding={dates.weekEnd} memberName={activeMember?.name ?? ''} onClose={() => setSelectedTask(null)} />}
+      {selectedTask && <DropboxPreviewModal task={selectedTask} weekEnding={dates.nextWeekEnd} memberName={activeMember?.name ?? ''} onClose={() => setSelectedTask(null)} />}
     </div>
   )
 }

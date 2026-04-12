@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { db, channelOps, messageOps, syncOps, syncLogOps, tokenOps, followUpOps, summaryOps, mondayOps } = require('./db');
+const { db, channelOps, messageOps, syncOps, syncLogOps, tokenOps, followUpOps, summaryOps, mondayOps, kvOps } = require('./db');
 const { startPoller, runSync, getSyncStatus } = require('./poller');
 const { generateSummary, getIsraelDate, getProcessingState } = require('./claude');
 const { clearBoardCache, loadBoardCacheFromDb, incrementalSync, fetchAllBoardTasks, fetchTeamTasks, fetchDailyActivity } = require('./monday_boards');
@@ -786,33 +786,79 @@ app.post('/api/ai/team-summary', async (req, res) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set' });
-    const { tasks = [] } = req.body;
+    const { tasks = [], lastWeekTasks, thisWeekTasks } = req.body;
 
-    const allTagged = tasks.map(t =>
-      `- [${t.isVideoTeam ? 'VIDEO' : 'DESIGN'}] ${t.memberName}: ${t.task.name} (${t.task.board_name}, Priority: ${t.task.priority || 'Normal'})`
-    ).join('\n');
+    const lastList = lastWeekTasks?.length ? lastWeekTasks : (lastWeekTasks == null ? tasks : [])
+    const thisList = thisWeekTasks || []
 
-    const prompt = `You are a creative studio manager writing a brief weekly recap for your boss.
-Split the summary into two sections: "## Video Team" and "## Design Team".
-Skip a section entirely if there are no tasks for it.
-Do NOT add a title or intro line at the top — start directly with the first section heading.
+    const fmt = t => `- [${t.isVideoTeam ? 'VIDEO' : 'DESIGN'}] ${t.memberName}: ${t.task.name} (${t.task.board_name}, Priority: ${t.task.priority || 'Normal'})`
+    const lastTagged = lastList.map(fmt).join('\n')
+    const thisTagged = thisList.map(fmt).join('\n')
+
+    // Build task section dynamically — only include weeks that have data
+    const hasLast = lastTagged.length > 0
+    const hasThis = thisTagged.length > 0
+    const taskSection = [
+      hasLast ? `Last week's completed tasks:\n${lastTagged}` : null,
+      hasThis ? `This week's tasks (in progress / upcoming):\n${thisTagged}` : null,
+    ].filter(Boolean).join('\n\n')
+
+    const weekLabel = hasThis && !hasLast ? '*This Week*' : '*Last Week*'
+    const tense = hasThis && !hasLast ? 'present/future' : 'past'
+
+    const prompt = `You are writing a brief weekly summary of a creative studio team for their manager. The output will be pasted directly into Slack.
+
+STRICT FORMAT — follow this exactly, no exceptions:
+
+${weekLabel}
+
+[Video team members listed here, NO section header for video]
+
+Person Name
+    • task description
+    • task description
+
+Person Name
+    • task description
+
+*Design Team*
+
+Person Name
+    • task description
 
 Rules:
-- Max 2 bullets per person. Pick only their most important or unique work.
-- Keep bullets very short — no complete sentences needed. Conversational tone.
-- **Bold** person names and key task/campaign names.
-- Do not list every task — synthesize and prioritize.
-- META platform tasks with Medium or Low priority should NOT be listed individually. Instead, group them into a single bullet like "**Name** knocked out X META ads this week".
+- The very first line must be exactly: ${weekLabel}
+- Then a blank line, then list VIDEO team members first with NO "Video Team" header — just their names and bullets.
+- After all video team members, add a blank line then *Design Team* (with asterisks for Slack bold), then design team members.
+- If there are no video team members, skip straight to *Design Team*.
+- If there are no design team members, omit *Design Team* entirely.
+- Person names are plain text — NO asterisks, NO bold formatting around names.
+- Each person: name on its own line, then 1–2 bullet lines starting with 4 spaces and • (bullet character).
+- Blank line between each person.
+- Skip any person with no notable tasks.
 
-Team's completed tasks:
-${allTagged || 'None'}
+TONE AND LANGUAGE — this is critical:
+- Write like someone on the team jotting a quick internal Slack note, NOT like a manager writing a formal report.
+- Use fragments, not full sentences. "Sunscreen Meta videos" is fine. "Creating Ab Firming Cream videos with split-screen transitions" is fine.
+- Use the actual product names from the tasks (e.g. "Face Cream", "Anti-Gray Serum", "Sunscreen") — don't abstract them.
+- Mention the creative format or angle when relevant (e.g. "split-screen storytelling", "dermatologist angle", "morning routine integration", "mashup transitions").
+- Casual grammar is fine. "At the moment is working on Meta ads" is acceptable.
+- Do NOT write openers like "This week, [name] worked on..." — go straight into the work.
+- Do NOT use words like "completed", "delivered", "worked on", "focused on" — keep it raw and note-like.
+- META ad tasks: group all of a person's meta work into one bullet. Mention up to 3 product names (the most prominent ones across their tasks). If there are format keywords across the tasks (e.g. "mash up", "animated", "split-screen", "UGC", "dermatologist"), weave them in naturally. Example: "Several meta videos for Face Cream, Sunscreen, and Anti-Gray Serum — mash up and split-screen formats". Do not list every task individually.
+- Non-META tasks: be specific — use the actual product name, campaign name, or creative angle from the task.
+- Use ${tense} tense.
+- Do NOT use markdown headers (##), dashes as bullets, asterisks on names, or any other formatting not shown above.
 
-Team Summary:`;
+Tasks:
+${taskSection || 'No tasks provided.'}
+
+Output:`
 
     const client = new Anthropic({ apiKey });
     const stream = await client.messages.stream({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
+      max_tokens: 1500,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -885,7 +931,7 @@ const EPOCH = new Date('2025-11-09T00:00:00');
 function weekFolder(weekEnding) {
   const sat = new Date(weekEnding + 'T00:00:00');
   const sun = new Date(sat);
-  sun.setDate(sat.getDate() + 1);
+  sun.setDate(sat.getDate() - 6); // Saturday - 6 = Sunday that starts this week
   const index = Math.round((sun.getTime() - EPOCH.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
   const label = `${MONTHS[sun.getMonth()]}_${sun.getDate()}_${sun.getFullYear()}`;
   return `${String(index).padStart(3, '0')}_${label}`;
@@ -1183,6 +1229,215 @@ app.get('/api/dropbox/thumbnail', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
+
+// ── Frame.io Integration ───────────────────────────────────────────────────────
+const ADOBE_IMS = 'https://ims-na1.adobelogin.com/ims';
+const FRAMEIO_API = 'https://api.frame.io/v4';
+const FRAMEIO_SCOPES = 'openid,AdobeID,offline_access,email,profile,additional_info.roles';
+
+async function getFrameioToken() {
+  const accessToken = kvOps.get('fio_access_token');
+  const expiry = kvOps.get('fio_token_expiry');
+  if (accessToken && expiry && Date.now() < parseInt(expiry)) return accessToken;
+
+  const refreshToken = kvOps.get('fio_refresh_token');
+  if (!refreshToken) throw new Error('Frame.io not connected. Please authorize first.');
+
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: process.env.FRAMEIO_CLIENT_ID,
+    client_secret: process.env.FRAMEIO_CLIENT_SECRET,
+    refresh_token: refreshToken,
+  });
+  const r = await fetch(`${ADOBE_IMS}/token/v3`, { method: 'POST', body: params });
+  if (!r.ok) throw new Error('Failed to refresh Frame.io token');
+  const data = await r.json();
+  kvOps.set('fio_access_token', data.access_token);
+  kvOps.set('fio_token_expiry', String(Date.now() + (data.expires_in * 1000) - 60000));
+  if (data.refresh_token) kvOps.set('fio_refresh_token', data.refresh_token);
+  return data.access_token;
+}
+
+async function frameioGet(path) {
+  const token = await getFrameioToken();
+  const r = await fetch(`${FRAMEIO_API}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`Frame.io API error ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+// GET /api/frameio/auth-url — returns the Adobe OAuth URL to open in browser
+app.get('/api/frameio/auth-url', (req, res) => {
+  const url = `${ADOBE_IMS}/authorize/v2?` + new URLSearchParams({
+    client_id: process.env.FRAMEIO_CLIENT_ID,
+    scope: FRAMEIO_SCOPES,
+    response_type: 'code',
+    redirect_uri: process.env.FRAMEIO_REDIRECT_URI,
+  });
+  res.json({ url });
+});
+
+// POST /api/frameio/exchange-code — one-time: exchange auth code for tokens
+app.post('/api/frameio/exchange-code', async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const params = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: process.env.FRAMEIO_CLIENT_ID,
+      client_secret: process.env.FRAMEIO_CLIENT_SECRET,
+      code,
+      redirect_uri: process.env.FRAMEIO_REDIRECT_URI,
+    });
+    const r = await fetch(`${ADOBE_IMS}/token/v3`, { method: 'POST', body: params });
+    const data = await r.json();
+    if (!r.ok) {
+      console.error('[frameio/exchange-code] Adobe error:', JSON.stringify(data));
+      console.error('[frameio/exchange-code] redirect_uri used:', process.env.FRAMEIO_REDIRECT_URI);
+      return res.status(400).json({ error: data.error_description || data.error || 'Token exchange failed', detail: data });
+    }
+    kvOps.set('fio_access_token', data.access_token);
+    kvOps.set('fio_token_expiry', String(Date.now() + (data.expires_in * 1000) - 60000));
+    if (data.refresh_token) kvOps.set('fio_refresh_token', data.refresh_token);
+    // Fetch account ID and store it
+    const token = data.access_token;
+    const meRes = await fetch(`${FRAMEIO_API}/accounts`, { headers: { Authorization: `Bearer ${token}` } });
+    if (meRes.ok) {
+      const me = await meRes.json();
+      const accountId = me?.data?.[0]?.id || me?.[0]?.id;
+      if (accountId) kvOps.set('fio_account_id', accountId);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[frameio/exchange-code]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/frameio/status — check if connected
+app.get('/api/frameio/status', (req, res) => {
+  const hasToken = !!kvOps.get('fio_refresh_token');
+  res.json({ connected: hasToken, accountId: kvOps.get('fio_account_id') });
+});
+
+// DELETE /api/frameio/disconnect
+app.delete('/api/frameio/disconnect', (req, res) => {
+  ['fio_access_token', 'fio_refresh_token', 'fio_token_expiry', 'fio_account_id'].forEach(k => kvOps.del(k));
+  res.json({ ok: true });
+});
+
+// GET /api/frameio/assets?reviewUrl=... — list video assets from a share/review link
+app.get('/api/frameio/assets', async (req, res) => {
+  try {
+    const { reviewUrl, projectId } = req.query;
+    let assets = [];
+
+    if (projectId) {
+      const accountId = kvOps.get('fio_account_id');
+      if (!accountId) return res.status(400).json({ error: 'No account ID stored. Re-authorize.' });
+      const data = await frameioGet(`/accounts/${accountId}/projects/${projectId}/assets?type=file&page_size=50`);
+      assets = (data.data || data || []).filter(a => a.media_type === 'video' || a.filetype?.startsWith('video'));
+    } else if (reviewUrl) {
+      // Extract token from share URL: app.frame.io/reviews/{token} or /shares/{token}
+      const match = reviewUrl.match(/\/(?:reviews|shares|v)\/([a-zA-Z0-9_-]+)/);
+      if (!match) return res.status(400).json({ error: 'Could not parse Frame.io URL' });
+      const shareToken = match[1];
+      // Try V4 share link endpoint
+      const token = await getFrameioToken();
+      const shareRes = await fetch(`${FRAMEIO_API}/share_links/${shareToken}/assets`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (shareRes.ok) {
+        const data = await shareRes.json();
+        assets = (data.data || data || []).filter(a => a.media_type === 'video' || (a.media_type || '').startsWith('video'));
+      } else {
+        // Fallback: try as presentation
+        const presRes = await fetch(`https://api.frame.io/v2/presentations/${shareToken}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (presRes.ok) {
+          const pres = await presRes.json();
+          assets = (pres.assets || []).map(a => ({
+            id: a.id, name: a.name, thumb: a.thumb, download_url: a.original,
+            filesize: a.filesize, duration: a.duration, media_type: 'video'
+          }));
+        } else {
+          return res.status(404).json({ error: 'Could not fetch assets from this link. Check the URL.' });
+        }
+      }
+    } else {
+      return res.status(400).json({ error: 'reviewUrl or projectId required' });
+    }
+
+    res.json({ assets });
+  } catch (err) {
+    console.error('[frameio/assets]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/frameio/thumbnail?assetId=... — proxy thumbnail to avoid CORS
+app.get('/api/frameio/thumbnail', async (req, res) => {
+  try {
+    const { assetId } = req.query;
+    const accountId = kvOps.get('fio_account_id');
+    const data = await frameioGet(`/accounts/${accountId}/assets/${assetId}`);
+    const thumbUrl = data.thumb_1280 || data.thumb_1024 || data.thumb_640 || data.thumb;
+    if (!thumbUrl) return res.status(404).json({ error: 'No thumbnail' });
+    const imgRes = await fetch(thumbUrl);
+    res.setHeader('Content-Type', imgRes.headers.get('content-type') || 'image/jpeg');
+    imgRes.body.pipe(res);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/frameio/copy-to-dropbox — stream a Frame.io asset directly into Dropbox
+app.post('/api/frameio/copy-to-dropbox', async (req, res) => {
+  try {
+    const { assetId, dropboxPath } = req.body;
+    if (!assetId || !dropboxPath) return res.status(400).json({ error: 'assetId and dropboxPath required' });
+
+    const accountId = kvOps.get('fio_account_id');
+    const fioToken = await getFrameioToken();
+
+    // Get the asset to find its download URL and filename
+    const assetRes = await fetch(`${FRAMEIO_API}/accounts/${accountId}/assets/${assetId}`, {
+      headers: { Authorization: `Bearer ${fioToken}` }
+    });
+    if (!assetRes.ok) throw new Error('Failed to fetch asset details');
+    const asset = await assetRes.json();
+    const asset_data = asset.data || asset;
+    const downloadUrl = asset_data.original || asset_data.download_url;
+    const filename = asset_data.name || `${assetId}.mp4`;
+    if (!downloadUrl) throw new Error('No download URL for this asset');
+
+    // Stream download from Frame.io
+    const dlRes = await fetch(downloadUrl);
+    if (!dlRes.ok) throw new Error('Failed to download from Frame.io');
+
+    // Upload to Dropbox
+    const fullPath = dropboxPath.endsWith('/') ? `${dropboxPath}${filename}` : `${dropboxPath}/${filename}`;
+    const dbxToken = await getDropboxToken();
+    const uploadRes = await fetch('https://content.dropboxapi.com/2/files/upload', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${dbxToken}`,
+        'Content-Type': 'application/octet-stream',
+        'Dropbox-API-Arg': JSON.stringify({ path: fullPath, mode: 'overwrite', autorename: true }),
+      },
+      body: dlRes.body,
+      duplex: 'half',
+    });
+    if (!uploadRes.ok) throw new Error(`Dropbox upload failed: ${await uploadRes.text()}`);
+    const uploaded = await uploadRes.json();
+    res.json({ ok: true, path: uploaded.path_display, name: uploaded.name });
+  } catch (err) {
+    console.error('[frameio/copy-to-dropbox]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+// ── End Frame.io ───────────────────────────────────────────────────────────────
+
 app.listen(PORT, async () => {
   console.log(`[Server] Slack Summary API running on port ${PORT}`);
   startPoller();
