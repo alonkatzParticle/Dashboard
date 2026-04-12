@@ -400,6 +400,47 @@ app.delete('/api/monday/settings/boards/:boardId', async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/monday/settings/seed — one-time: populate Neon with local config
+app.post('/api/monday/settings/seed', async (req, res) => {
+  try {
+    const members = [
+      { name: 'Dan Lowenstein',  monday_user_id: '69272319',  is_video_team: 0 },
+      { name: 'Natalie Abesdid', monday_user_id: '75466488',  is_video_team: 0 },
+      { name: 'Matan Shapira',   monday_user_id: '75937261',  is_video_team: 1 },
+      { name: 'Isaac Yashar',    monday_user_id: '51316881',  is_video_team: 1 },
+      { name: 'Yael Ben-Dor',    monday_user_id: '75466464',  is_video_team: 1 },
+      { name: 'Omri Tabachnik',  monday_user_id: '96948732',  is_video_team: 1 },
+    ];
+    const boards = [
+      { board_id: '5433027071', label: 'Video Projects' },
+      { board_id: '8036329818', label: 'Design Projects - 2.0' },
+    ];
+
+    // Clear and re-seed members
+    const { pool } = require('./db');
+    await pool.query('DELETE FROM monday_members');
+    await pool.query('DELETE FROM monday_boards');
+    for (const m of members) {
+      await pool.query(
+        "INSERT INTO monday_members (name, monday_user_id, is_video_team) VALUES ($1, $2, $3)",
+        [m.name, m.monday_user_id, m.is_video_team]
+      );
+    }
+    for (const b of boards) {
+      await pool.query(
+        "INSERT INTO monday_boards (board_id, label) VALUES ($1, $2)",
+        [b.board_id, b.label]
+      );
+    }
+    const seededMembers = await mondayOps.getMembers();
+    const seededBoards = await mondayOps.getBoards();
+    res.json({ ok: true, members: seededMembers, boards: seededBoards });
+  } catch (err) {
+    console.error('[seed]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Status Report
 // ══════════════════════════════════════════════════════════════════════════════
