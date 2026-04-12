@@ -162,13 +162,37 @@ async function initDb() {
     );
   `);
 
-  // Seed team members if empty
-  const count = await q1('SELECT COUNT(*) as count FROM monday_members');
-  if (parseInt(count.count) === 0) {
-    for (const name of ['Dan', 'Natalie', 'Matan', 'Isaac', 'Yael', 'Omri']) {
-      await q("INSERT INTO monday_members (name, monday_user_id, is_video_team) VALUES ($1, '', 0)", [name]);
+  // Seed from INITIAL_CONFIG env var (or defaults) if tables are empty
+  const memberCount = await q1('SELECT COUNT(*) as count FROM monday_members');
+  const boardCount  = await q1('SELECT COUNT(*) as count FROM monday_boards');
+
+  if (parseInt(memberCount.count) === 0) {
+    let members = [
+      { name: 'Dan',    monday_user_id: '', is_video_team: 0 },
+      { name: 'Natalie',monday_user_id: '', is_video_team: 0 },
+      { name: 'Matan',  monday_user_id: '', is_video_team: 1 },
+      { name: 'Isaac',  monday_user_id: '', is_video_team: 1 },
+      { name: 'Yael',   monday_user_id: '', is_video_team: 1 },
+      { name: 'Omri',   monday_user_id: '', is_video_team: 1 },
+    ];
+    if (process.env.INITIAL_CONFIG) {
+      try { members = JSON.parse(process.env.INITIAL_CONFIG).members || members; } catch(_) {}
     }
-    console.log('[DB] Seeded 6 team members');
+    for (const m of members) {
+      await q('INSERT INTO monday_members (name, monday_user_id, is_video_team) VALUES ($1, $2, $3)',
+        [m.name, m.monday_user_id || '', m.is_video_team || 0]);
+    }
+    console.log(`[DB] Seeded ${members.length} members`);
+  }
+
+  if (parseInt(boardCount.count) === 0 && process.env.INITIAL_CONFIG) {
+    try {
+      const cfg = JSON.parse(process.env.INITIAL_CONFIG);
+      for (const b of (cfg.boards || [])) {
+        await q('INSERT INTO monday_boards (board_id, label) VALUES ($1, $2)', [b.board_id, b.label || '']);
+      }
+      console.log(`[DB] Seeded ${(cfg.boards||[]).length} boards`);
+    } catch(_) {}
   }
 
   console.log('[DB] Postgres connected and schema ready');
