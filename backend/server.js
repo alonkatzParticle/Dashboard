@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { db, channelOps, messageOps, syncOps, syncLogOps, tokenOps, followUpOps, summaryOps, mondayOps, kvOps } = require('./db');
+const { channelOps, messageOps, syncOps, syncLogOps, tokenOps, followUpOps, summaryOps, mondayOps, kvOps, initDb } = require('./db');
 const { startPoller, runSync, getSyncStatus } = require('./poller');
 const { generateSummary, getIsraelDate, getProcessingState } = require('./claude');
 const { clearBoardCache, loadBoardCacheFromDb, incrementalSync, fetchAllBoardTasks, fetchTeamTasks, fetchDailyActivity } = require('./monday_boards');
@@ -1236,11 +1236,11 @@ const FRAMEIO_API = 'https://api.frame.io/v4';
 const FRAMEIO_SCOPES = 'openid,AdobeID,offline_access,email,profile,additional_info.roles';
 
 async function getFrameioToken() {
-  const accessToken = kvOps.get('fio_access_token');
-  const expiry = kvOps.get('fio_token_expiry');
+  const accessToken = await kvOps.get('fio_access_token');
+  const expiry = await kvOps.get('fio_token_expiry');
   if (accessToken && expiry && Date.now() < parseInt(expiry)) return accessToken;
 
-  const refreshToken = kvOps.get('fio_refresh_token');
+  const refreshToken = await kvOps.get('fio_refresh_token');
   if (!refreshToken) throw new Error('Frame.io not connected. Please authorize first.');
 
   const params = new URLSearchParams({
@@ -1252,9 +1252,9 @@ async function getFrameioToken() {
   const r = await fetch(`${ADOBE_IMS}/token/v3`, { method: 'POST', body: params });
   if (!r.ok) throw new Error('Failed to refresh Frame.io token');
   const data = await r.json();
-  kvOps.set('fio_access_token', data.access_token);
-  kvOps.set('fio_token_expiry', String(Date.now() + (data.expires_in * 1000) - 60000));
-  if (data.refresh_token) kvOps.set('fio_refresh_token', data.refresh_token);
+  await kvOps.set('fio_access_token', data.access_token);
+  await kvOps.set('fio_token_expiry', String(Date.now() + (data.expires_in * 1000) - 60000));
+  if (data.refresh_token) await kvOps.set('fio_refresh_token', data.refresh_token);
   return data.access_token;
 }
 
@@ -1295,16 +1295,16 @@ app.post('/api/frameio/exchange-code', async (req, res) => {
       console.error('[frameio/exchange-code] redirect_uri used:', process.env.FRAMEIO_REDIRECT_URI);
       return res.status(400).json({ error: data.error_description || data.error || 'Token exchange failed', detail: data });
     }
-    kvOps.set('fio_access_token', data.access_token);
-    kvOps.set('fio_token_expiry', String(Date.now() + (data.expires_in * 1000) - 60000));
-    if (data.refresh_token) kvOps.set('fio_refresh_token', data.refresh_token);
+    await kvOps.set('fio_access_token', data.access_token);
+    await kvOps.set('fio_token_expiry', String(Date.now() + (data.expires_in * 1000) - 60000));
+    if (data.refresh_token) await kvOps.set('fio_refresh_token', data.refresh_token);
     // Fetch account ID and store it
     const token = data.access_token;
     const meRes = await fetch(`${FRAMEIO_API}/accounts`, { headers: { Authorization: `Bearer ${token}` } });
     if (meRes.ok) {
       const me = await meRes.json();
       const accountId = me?.data?.[0]?.id || me?.[0]?.id;
-      if (accountId) kvOps.set('fio_account_id', accountId);
+      if (accountId) await kvOps.set('fio_account_id', accountId);
     }
     res.json({ ok: true });
   } catch (err) {
@@ -1314,14 +1314,15 @@ app.post('/api/frameio/exchange-code', async (req, res) => {
 });
 
 // GET /api/frameio/status — check if connected
-app.get('/api/frameio/status', (req, res) => {
-  const hasToken = !!kvOps.get('fio_refresh_token');
-  res.json({ connected: hasToken, accountId: kvOps.get('fio_account_id') });
+app.get('/api/frameio/status', async (req, res) => {
+  const hasToken = !!(await kvOps.get('fio_refresh_token'));
+  const accountId = await kvOps.get('fio_account_id');
+  res.json({ connected: hasToken, accountId });
 });
 
 // DELETE /api/frameio/disconnect
-app.delete('/api/frameio/disconnect', (req, res) => {
-  ['fio_access_token', 'fio_refresh_token', 'fio_token_expiry', 'fio_account_id'].forEach(k => kvOps.del(k));
+app.delete('/api/frameio/disconnect', async (req, res) => {
+  for (const k of ['fio_access_token', 'fio_refresh_token', 'fio_token_expiry', 'fio_account_id']) await kvOps.del(k);
   res.json({ ok: true });
 });
 
@@ -1332,7 +1333,7 @@ app.get('/api/frameio/assets', async (req, res) => {
     let assets = [];
 
     if (projectId) {
-      const accountId = kvOps.get('fio_account_id');
+      const accountId = await kvOps.get('fio_account_id');
       if (!accountId) return res.status(400).json({ error: 'No account ID stored. Re-authorize.' });
       const data = await frameioGet(`/accounts/${accountId}/projects/${projectId}/assets?type=file&page_size=50`);
       assets = (data.data || data || []).filter(a => a.media_type === 'video' || a.filetype?.startsWith('video'));
@@ -1379,7 +1380,7 @@ app.get('/api/frameio/assets', async (req, res) => {
 app.get('/api/frameio/thumbnail', async (req, res) => {
   try {
     const { assetId } = req.query;
-    const accountId = kvOps.get('fio_account_id');
+    const accountId = await kvOps.get('fio_account_id');
     const data = await frameioGet(`/accounts/${accountId}/assets/${assetId}`);
     const thumbUrl = data.thumb_1280 || data.thumb_1024 || data.thumb_640 || data.thumb;
     if (!thumbUrl) return res.status(404).json({ error: 'No thumbnail' });
@@ -1397,7 +1398,7 @@ app.post('/api/frameio/copy-to-dropbox', async (req, res) => {
     const { assetId, dropboxPath } = req.body;
     if (!assetId || !dropboxPath) return res.status(400).json({ error: 'assetId and dropboxPath required' });
 
-    const accountId = kvOps.get('fio_account_id');
+    const accountId = await kvOps.get('fio_account_id');
     const fioToken = await getFrameioToken();
 
     // Get the asset to find its download URL and filename
@@ -1438,9 +1439,32 @@ app.post('/api/frameio/copy-to-dropbox', async (req, res) => {
 });
 // ── End Frame.io ───────────────────────────────────────────────────────────────
 
-app.listen(PORT, async () => {
-  console.log(`[Server] Slack Summary API running on port ${PORT}`);
-  startPoller();
-  // Warm in-memory board cache from DB (so first request doesn't hit Monday API)
-  await loadBoardCacheFromDb();
+// ── Cron endpoint (Vercel Cron calls this every 15 min) ──────────────────────
+app.post('/api/internal/cron-sync', async (req, res) => {
+  const secret = req.headers['x-cron-secret'] || req.query.secret;
+  if (process.env.CRON_SECRET && secret !== process.env.CRON_SECRET) return res.status(401).json({ error: 'unauthorized' });
+  try { await runSync(); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ── Init middleware (runs once on first request in serverless) ────────────────
+let _initialized = false;
+app.use(async (req, res, next) => {
+  if (!_initialized) {
+    try { await initDb(); await loadBoardCacheFromDb(); _initialized = true; } catch (e) { console.error('[init]', e); }
+  }
+  next();
+});
+
+// Local dev: start a real HTTP server
+if (require.main === module) {
+  const PORT = process.env.PORT || 3001;
+  app.listen(PORT, async () => {
+    console.log(`[Server] Running on port ${PORT}`);
+    await initDb();
+    startPoller();
+    await loadBoardCacheFromDb();
+  });
+}
+
+module.exports = app;
