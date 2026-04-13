@@ -1271,7 +1271,6 @@ app.get('/api/dropbox/thumbnail', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
 
 // ── Frame.io Integration ───────────────────────────────────────────────────────
 const ADOBE_IMS = 'https://ims-na1.adobelogin.com/ims';
