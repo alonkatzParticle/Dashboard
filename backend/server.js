@@ -23,32 +23,32 @@ app.use((req, _res, next) => {
 });
 
 // GET /api/status - overall sync status
-app.get('/api/status', (req, res) => {
-  const syncStatus = getSyncStatus();
-  const tokens = tokenOps.get();
-  const messageCount = messageOps.count();
-  const channels = channelOps.getAll();
-  const recentLogs = syncLogOps.getLast(5);
-  const { getWeekStartTs } = require('./timeUtils');
-  const weekStart = getWeekStartTs();
-  const unanalyzedCount = db.prepare(
-    `SELECT COUNT(*) as cnt FROM messages WHERE analyzed_at IS NULL AND CAST(ts AS REAL) >= ? AND text != '' AND is_reply = 0`
-  ).get(weekStart).cnt;
+app.get('/api/status', async (req, res) => {
+  try {
+    const syncStatus = getSyncStatus();
+    const tokens = await tokenOps.get();
+    const messageCount = await messageOps.count();
+    const channels = await channelOps.getAll();
+    const recentLogs = await syncLogOps.getLast(5);
 
-  res.json({
-    sync: syncStatus,
-    tokens: {
-      hasToken: !!tokens,
-      expiresAt: tokens?.expires_at ? new Date(tokens.expires_at).toISOString() : null,
-      expiresInMinutes: tokens?.expires_at ? Math.round((tokens.expires_at - Date.now()) / 60000) : null
-    },
-    stats: {
-      totalMessages: messageCount.count,
-      totalChannels: channels.length,
-      unanalyzedCount
-    },
-    recentSyncs: recentLogs
-  });
+    res.json({
+      sync: syncStatus,
+      tokens: {
+        hasToken: !!tokens,
+        expiresAt: tokens?.expires_at ? new Date(tokens.expires_at).toISOString() : null,
+        expiresInMinutes: tokens?.expires_at ? Math.round((tokens.expires_at - Date.now()) / 60000) : null
+      },
+      stats: {
+        totalMessages: messageCount?.count || 0,
+        totalChannels: (channels || []).length,
+        unanalyzedCount: 0
+      },
+      recentSyncs: recentLogs || []
+    });
+  } catch (err) {
+    console.error('[/api/status]', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/channels - list all synced channels
@@ -702,8 +702,8 @@ app.get('/api/monday/team-tasks', async (req, res) => {
     const token = process.env.MONDAY_API_TOKEN;
     if (!token) return res.status(500).json({ error: 'MONDAY_API_TOKEN not set' });
     const { week_start, week_end, next_week_start, next_week_end, force } = req.query;
-    const boardIds = mondayOps.getBoards().map(b => b.board_id);
-    const members = mondayOps.getMembers().filter(m => m.monday_user_id);
+    const boardIds = (await mondayOps.getBoards()).map(b => b.board_id);
+    const members = (await mondayOps.getMembers()).filter(m => m.monday_user_id);
     const validUserIds = members.map(m => String(m.monday_user_id));
     if (boardIds.length === 0 || validUserIds.length === 0) return res.json({ _meta: { fromCache: false } });
 
@@ -757,12 +757,12 @@ app.get('/api/monday/team-tasks', async (req, res) => {
         fetchTeamTasks(boardIds, validUserIds, token, next_week_start, next_week_end, true),
       ]);
       const fresh = buildResult(lastWeekByUser, thisWeekByUser);
-      mondayOps.setTasksCache(cacheKey, fresh);
+      await mondayOps.setTasksCache(cacheKey, fresh);
       return res.json({ ...fresh, _meta: { fromCache: false, fetchedAt: Date.now() } });
     }
 
     // Check SQLite cache
-    const cached = mondayOps.getTasksCache(cacheKey);
+    const cached = await mondayOps.getTasksCache(cacheKey);
     const isStale = !cached || (Date.now() - cached.fetchedAt > CACHE_TTL);
 
     if (cached) {
@@ -779,7 +779,7 @@ app.get('/api/monday/team-tasks', async (req, res) => {
       fetchTeamTasks(boardIds, validUserIds, token, next_week_start, next_week_end, false),
     ]);
     const fresh = buildResult(lastWeekByUser, thisWeekByUser);
-    mondayOps.setTasksCache(cacheKey, fresh);
+    await mondayOps.setTasksCache(cacheKey, fresh);
     res.json({ ...fresh, _meta: { fromCache: false, fetchedAt: Date.now() } });
   } catch (err) {
     console.error('[monday/team-tasks]', err);
