@@ -13,6 +13,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Vercel Services strips the /api routePrefix before passing to Express.
+// Re-add it so all /api/* routes continue to match correctly.
+app.use((req, _res, next) => {
+  if (!req.path.startsWith('/api')) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
+
 // GET /api/status - overall sync status
 app.get('/api/status', (req, res) => {
   const syncStatus = getSyncStatus();
