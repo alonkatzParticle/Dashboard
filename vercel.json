@@ -1,7 +1,15 @@
 {
-  "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index.js" }
-  ],
+  "experimentalServices": {
+    "frontend": {
+      "entrypoint": "frontend",
+      "routePrefix": "/",
+      "framework": "vite"
+    },
+    "backend": {
+      "entrypoint": "backend",
+      "routePrefix": "/api"
+    }
+  },
   "crons": [
     { "path": "/api/internal/cron-sync", "schedule": "*/15 * * * *" }
   ]

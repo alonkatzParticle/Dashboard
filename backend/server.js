@@ -1499,15 +1499,13 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// Local dev: start a real HTTP server
-if (require.main === module) {
-  const PORT = process.env.PORT || 3001;
-  app.listen(PORT, async () => {
-    console.log(`[Server] Running on port ${PORT}`);
-    await initDb();
-    startPoller();
-    await loadBoardCacheFromDb();
-  });
-}
+// Start server — always listen (Vercel Services runs this as a persistent process)
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, async () => {
+  console.log(`[Server] Running on port ${PORT}`);
+  await initDb();
+  startPoller();
+  await loadBoardCacheFromDb();
+});
 
 module.exports = app;
