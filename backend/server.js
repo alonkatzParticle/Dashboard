@@ -1414,9 +1414,11 @@ app.get('/api/frameio/assets', async (req, res) => {
         try {
           let rawItems = [];
           if (folderId) {
-            // Fetch children of the specific folder asset (no type filter — V4 doesn't support it)
-            const data = await frameioGet(`/accounts/${accountId}/assets/${folderId}/children?page_size=50`);
-            rawItems = data.data || data || [];
+            // V4 has no /children endpoint — catch 404 silently and fall through
+            try {
+              const data = await frameioGet(`/accounts/${accountId}/assets/${folderId}/children?page_size=50`);
+              rawItems = data.data || data || [];
+            } catch (_) { /* fall through to project listing */ }
           }
           // Fall back to project-level listing if nothing found
           if (rawItems.length === 0) {
