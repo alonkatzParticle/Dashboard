@@ -1414,6 +1414,90 @@ app.get('/api/frameio/debug-folder', async (req, res) => {
   }
 });
 
+// GET /api/frameio/stream?fileId=... — proxy Frame.io video stream for in-app playback
+app.get('/api/frameio/stream', async (req, res) => {
+  try {
+    const { fileId } = req.query;
+    if (!fileId) return res.status(400).json({ error: 'fileId required' });
+    const accountId = await kvOps.get('fio_account_id');
+    if (!accountId) return res.status(400).json({ error: 'No account ID stored' });
+
+    // Fetch file metadata to get download URL
+    const file = await frameioGet(`/accounts/${accountId}/files/${fileId}`);
+    const fd = file?.data || file;
+    const downloadUrl = fd?.download_url || fd?.original || fd?.media?.h264_1080_best || fd?.media?.h264_720p;
+    if (!downloadUrl) return res.status(404).json({ error: 'No download URL available for this file' });
+
+    // Proxy with range support for video seeking
+    const rangeHeader = req.headers['range'];
+    const upstream = await fetch(downloadUrl, {
+      headers: rangeHeader ? { Range: rangeHeader } : {}
+    });
+
+    res.status(upstream.status);
+    const contentType = upstream.headers.get('content-type') || 'video/mp4';
+    const contentLength = upstream.headers.get('content-length');
+    const contentRange = upstream.headers.get('content-range');
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+    res.setHeader('Cache-Control', 'no-store');
+    upstream.body.pipe(res);
+  } catch (err) {
+    console.error('[frameio/stream]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/frameio/to-dropbox — copy a Frame.io file into the weekly Dropbox folder
+app.post('/api/frameio/to-dropbox', async (req, res) => {
+  try {
+    const { fileId, fileName, weekEnding, memberName } = req.body;
+    if (!fileId || !fileName) return res.status(400).json({ error: 'fileId and fileName required' });
+    const accountId = await kvOps.get('fio_account_id');
+    if (!accountId) return res.status(400).json({ error: 'No account ID stored' });
+
+    // Get download URL from Frame.io
+    const file = await frameioGet(`/accounts/${accountId}/files/${fileId}`);
+    const fd = file?.data || file;
+    const downloadUrl = fd?.download_url || fd?.original;
+    if (!downloadUrl) return res.status(404).json({ error: 'No download URL for this file' });
+
+    // Stream from Frame.io → Dropbox upload-session
+    // 1. Get Dropbox upload link
+    const dbToken = await getDropboxToken();
+    const sanitized = fileName.replace(/[^\w.\-_ ()]/g, '_');
+    const week = weekEnding || 'unknown';
+    const member = memberName || 'unknown';
+    const dropboxPath = `${process.env.DROPBOX_PATH || '/Weekly'}/${week}/${member}/${sanitized}`;
+
+    // Fetch file from Frame.io
+    const fileRes = await fetch(downloadUrl);
+    if (!fileRes.ok) return res.status(502).json({ error: 'Failed to fetch file from Frame.io' });
+    const fileBuffer = await fileRes.arrayBuffer();
+
+    // Upload to Dropbox
+    const uploadRes = await fetch('https://content.dropboxapi.com/2/files/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${dbToken}`,
+        'Content-Type': 'application/octet-stream',
+        'Dropbox-API-Arg': JSON.stringify({
+          path: dropboxPath, mode: 'add', autorename: true, mute: false,
+        }),
+      },
+      body: fileBuffer,
+    });
+    const uploadData = await uploadRes.json();
+    if (!uploadRes.ok) return res.status(502).json({ error: uploadData?.error_summary || 'Dropbox upload failed' });
+    res.json({ success: true, path: uploadData.path_display });
+  } catch (err) {
+    console.error('[frameio/to-dropbox]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/frameio/assets?reviewUrl=... — list video assets from a share/review/project link
 app.get('/api/frameio/assets', async (req, res) => {
   try {

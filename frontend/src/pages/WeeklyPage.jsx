@@ -42,6 +42,22 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
       .finally(() => setFioLoading(false))
   }, [task.frameio_link, view])
 
+  const [fioLightbox, setFioLightbox] = useState(null)  // {asset, copying, copied, error}
+  const openFioAsset = (asset) => setFioLightbox({ asset, copying: false, copied: false, error: null })
+  const copyFioToWeekly = async () => {
+    if (!fioLightbox || fioLightbox.copying) return
+    setFioLightbox(prev => ({ ...prev, copying: true, error: null }))
+    try {
+      const res = await fetch('/api/frameio/to-dropbox', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId: fioLightbox.asset.file_id, fileName: fioLightbox.asset.name, weekEnding, memberName }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      setFioLightbox(prev => ({ ...prev, copying: false, copied: true }))
+    } catch (e) { setFioLightbox(prev => ({ ...prev, copying: false, error: String(e) })) }
+  }
+
   const mediaFiles = files.filter(f => f.is_image || f.is_video)
   const lbIdx = lightbox ? mediaFiles.findIndex(f => f.name === lightbox.name) : -1
 
@@ -210,10 +226,9 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
                 {fioAssets.map(asset => {
                   const thumb = asset.thumb
                   const dur = asset.duration ? `${Math.floor(asset.duration / 60)}:${String(Math.floor(asset.duration % 60)).padStart(2, '0')}` : null
-                  const href = asset.view_url || task.frameio_link
                   return (
-                    <a key={asset.id} href={href} target="_blank" rel="noopener noreferrer"
-                      className="relative group aspect-square rounded-lg overflow-hidden border border-orange-500/20 bg-white/5 block">
+                    <button key={asset.id} onClick={() => openFioAsset(asset)}
+                      className="relative group aspect-square rounded-lg overflow-hidden border border-orange-500/20 bg-white/5 block w-full">
                       {thumb
                         ? <img src={thumb} alt={asset.name} className="w-full h-full object-cover" />
                         : <div className="w-full h-full flex items-center justify-center text-4xl">🎬</div>
@@ -229,7 +244,7 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
                           {dur && <p className="text-orange-300 text-[10px]">{dur}</p>}
                         </div>
                       </div>
-                    </a>
+                    </button>
                   )
                 })}
               </div>
@@ -238,6 +253,31 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
         )}
 
       </div>
+      {/* ── Frame.io video lightbox ── */}
+      {fioLightbox && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95"
+          onClick={e => { if (e.target === e.currentTarget) setFioLightbox(null) }}>
+          <button onClick={() => setFioLightbox(null)} className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl z-10">✕</button>
+          <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3 w-full px-4">
+            <video
+              src={`/api/frameio/stream?fileId=${fioLightbox.asset.file_id}`}
+              controls autoPlay
+              className="max-w-full max-h-[75vh] rounded-xl shadow-2xl bg-black"
+            />
+            <div className="flex items-center gap-3">
+              <p className="text-white/70 text-sm truncate max-w-xs">{fioLightbox.asset.name}</p>
+              <button onClick={copyFioToWeekly} disabled={fioLightbox.copying || fioLightbox.copied}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white text-sm font-medium transition-colors shrink-0">
+                {fioLightbox.copying && <div className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />}
+                {fioLightbox.copied ? '✓ Added to Weekly' : 'Copy to Weekly'}
+              </button>
+              <a href={fioLightbox.asset.view_url || task.frameio_link} target="_blank" rel="noopener noreferrer"
+                className="text-orange-400 hover:text-orange-300 text-xs shrink-0">Open in Frame.io ↗</a>
+            </div>
+            {fioLightbox.error && <p className="text-red-400 text-xs">{fioLightbox.error}</p>}
+          </div>
+        </div>
+      )}
       {lightbox && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90"
           onClick={e => { if (e.target === e.currentTarget) setLightbox(null) }}>
