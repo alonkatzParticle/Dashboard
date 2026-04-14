@@ -1388,6 +1388,32 @@ app.delete('/api/frameio/disconnect', async (req, res) => {
   res.json({ ok: true });
 });
 
+// GET /api/frameio/debug-folder?folderId=...&projectId=... — raw response for debugging
+app.get('/api/frameio/debug-folder', async (req, res) => {
+  try {
+    const { folderId, projectId } = req.query;
+    const accountId = await kvOps.get('fio_account_id');
+    if (!accountId) return res.status(400).json({ error: 'No account ID' });
+    const results = {};
+    if (folderId) {
+      const r = await frameioGet(`/accounts/${accountId}/folders/${folderId}/children?page_size=50`).catch(e => ({ error: e.message }));
+      results.folderChildren = r;
+    }
+    if (projectId) {
+      const p = await frameioGet(`/accounts/${accountId}/projects/${projectId}`).catch(e => ({ error: e.message }));
+      results.project = p;
+      const rootId = p?.data?.root_folder_id || p?.root_folder_id;
+      if (rootId) {
+        const rc = await frameioGet(`/accounts/${accountId}/folders/${rootId}/children?page_size=50`).catch(e => ({ error: e.message }));
+        results.rootFolderChildren = rc;
+      }
+    }
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/frameio/assets?reviewUrl=... — list video assets from a share/review/project link
 app.get('/api/frameio/assets', async (req, res) => {
   try {
