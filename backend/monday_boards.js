@@ -183,15 +183,18 @@ function processItem(item, boardName, mondayUserId, statusColors = {}) {
   }
 
   let dropboxLink = null;
+  let frameioLink = null;
   for (const c of cols) {
     try {
       if (c.value && c.value !== 'null') {
         const parsed = JSON.parse(c.value);
         const url = parsed?.url ?? (typeof parsed === 'string' ? parsed : null);
-        if (url?.includes('dropbox.com')) { dropboxLink = url; break; }
+        if (url?.includes('dropbox.com') && !dropboxLink) dropboxLink = url;
+        if ((url?.includes('frame.io') || url?.includes('app.frame.io')) && !frameioLink) frameioLink = url;
       }
     } catch {}
-    if (c.text?.includes('dropbox.com')) { dropboxLink = c.text; break; }
+    if (c.text?.includes('dropbox.com') && !dropboxLink) dropboxLink = c.text;
+    if ((c.text?.includes('frame.io') || c.text?.includes('app.frame.io')) && !frameioLink) frameioLink = c.text;
   }
 
   return {
@@ -206,6 +209,7 @@ function processItem(item, boardName, mondayUserId, statusColors = {}) {
     status_color: statusColors[(statusCol?.text ?? '').toLowerCase()] ?? null,
     monday_url: item.url ?? null,
     dropbox_link: dropboxLink,
+    frameio_link: frameioLink,
   };
 }
 
@@ -229,15 +233,18 @@ function processTeamItem(item, boardName, statusColors = {}) {
   }
 
   let dropboxLink = null;
+  let frameioLink = null;
   for (const c of cols) {
     try {
       if (c.value && c.value !== 'null') {
         const parsed = JSON.parse(c.value);
         const url = parsed?.url ?? (typeof parsed === 'string' ? parsed : null);
-        if (url?.includes('dropbox.com')) { dropboxLink = url; break; }
+        if (url?.includes('dropbox.com') && !dropboxLink) dropboxLink = url;
+        if ((url?.includes('frame.io') || url?.includes('app.frame.io')) && !frameioLink) frameioLink = url;
       }
     } catch {}
-    if (c.text?.includes('dropbox.com')) { dropboxLink = c.text; break; }
+    if (c.text?.includes('dropbox.com') && !dropboxLink) dropboxLink = c.text;
+    if ((c.text?.includes('frame.io') || c.text?.includes('app.frame.io')) && !frameioLink) frameioLink = c.text;
   }
 
   return {
@@ -252,6 +259,7 @@ function processTeamItem(item, boardName, statusColors = {}) {
     status_color: statusColors[(statusCol?.text ?? '').toLowerCase()] ?? null,
     monday_url: item.url ?? null,
     dropbox_link: dropboxLink,
+    frameio_link: frameioLink,
   };
 }
 
@@ -305,7 +313,7 @@ async function fetchTeamTasks(boardIds, validUserIds, token, weekStart, nextWeek
             id: teamTask.id, name: teamTask.name, board_name: teamTask.board_name,
             assignee_id: assignee, timeline_start: teamTask.timeline_start, timeline_end: teamTask.timeline_end,
             priority: teamTask.priority, status: teamTask.status, status_color: teamTask.status_color,
-            monday_url: teamTask.monday_url, dropbox_link: teamTask.dropbox_link,
+            monday_url: teamTask.monday_url, dropbox_link: teamTask.dropbox_link, frameio_link: teamTask.frameio_link,
           });
         }
       }
