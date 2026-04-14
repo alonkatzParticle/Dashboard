@@ -1365,43 +1365,70 @@ app.delete('/api/frameio/disconnect', async (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/frameio/assets?reviewUrl=... — list video assets from a share/review link
+// GET /api/frameio/assets?reviewUrl=... — list video assets from a share/review/project link
 app.get('/api/frameio/assets', async (req, res) => {
   try {
     const { reviewUrl, projectId } = req.query;
     let assets = [];
+    const accountId = await kvOps.get('fio_account_id');
 
     if (projectId) {
-      const accountId = await kvOps.get('fio_account_id');
+      // Explicit projectId param
       if (!accountId) return res.status(400).json({ error: 'No account ID stored. Re-authorize.' });
       const data = await frameioGet(`/accounts/${accountId}/projects/${projectId}/assets?type=file&page_size=50`);
       assets = (data.data || data || []).filter(a => a.media_type === 'video' || a.filetype?.startsWith('video'));
+
     } else if (reviewUrl) {
-      // Extract token from share URL: app.frame.io/reviews/{token} or /shares/{token}
-      const match = reviewUrl.match(/\/(?:reviews|shares|v)\/([a-zA-Z0-9_-]+)/);
-      if (!match) return res.status(400).json({ error: 'Could not parse Frame.io URL' });
-      const shareToken = match[1];
-      // Try V4 share link endpoint
-      const token = await getFrameioToken();
-      const shareRes = await fetch(`${FRAMEIO_API}/share_links/${shareToken}/assets`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (shareRes.ok) {
-        const data = await shareRes.json();
-        assets = (data.data || data || []).filter(a => a.media_type === 'video' || (a.media_type || '').startsWith('video'));
+      // ── next.frame.io/project/{projectId}/{folderId} ──────────────────────
+      const projectMatch = reviewUrl.match(/next\.frame\.io\/project\/([a-f0-9-]+)(?:\/([a-f0-9-]+))?/i);
+      if (projectMatch) {
+        const projId = projectMatch[1];
+        const folderId = projectMatch[2]; // may be undefined if URL ends at project
+        if (!accountId) return res.status(400).json({ error: 'No account ID stored. Re-authorize.' });
+        try {
+          let data;
+          if (folderId) {
+            // Try to list children of the specific folder/asset
+            data = await frameioGet(`/accounts/${accountId}/assets/${folderId}/children?type=file&page_size=50`);
+          } else {
+            data = await frameioGet(`/accounts/${accountId}/projects/${projId}/assets?type=file&page_size=50`);
+          }
+          assets = (data.data || data || []).filter(a => a.media_type === 'video' || (a.media_type || '').includes('video'));
+          // If no files found in folder, fall back to project-level listing
+          if (assets.length === 0 && folderId) {
+            const fallback = await frameioGet(`/accounts/${accountId}/projects/${projId}/assets?type=file&page_size=50`);
+            assets = (fallback.data || fallback || []).filter(a => a.media_type === 'video' || (a.media_type || '').includes('video'));
+          }
+        } catch (e) {
+          return res.status(400).json({ error: `Frame.io project fetch failed: ${e.message}` });
+        }
+
+      // ── app.frame.io/reviews/{token} or /shares/{token} ───────────────────
       } else {
-        // Fallback: try as presentation
-        const presRes = await fetch(`https://api.frame.io/v2/presentations/${shareToken}`, {
+        const match = reviewUrl.match(/\/(?:reviews|shares|v)\/([a-zA-Z0-9_-]+)/);
+        if (!match) return res.status(400).json({ error: 'Could not parse Frame.io URL. Expected next.frame.io/project/... or app.frame.io/reviews/...' });
+        const shareToken = match[1];
+        const token = await getFrameioToken();
+        const shareRes = await fetch(`${FRAMEIO_API}/share_links/${shareToken}/assets`, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        if (presRes.ok) {
-          const pres = await presRes.json();
-          assets = (pres.assets || []).map(a => ({
-            id: a.id, name: a.name, thumb: a.thumb, download_url: a.original,
-            filesize: a.filesize, duration: a.duration, media_type: 'video'
-          }));
+        if (shareRes.ok) {
+          const data = await shareRes.json();
+          assets = (data.data || data || []).filter(a => a.media_type === 'video' || (a.media_type || '').startsWith('video'));
         } else {
-          return res.status(404).json({ error: 'Could not fetch assets from this link. Check the URL.' });
+          // Fallback: try as v2 presentation
+          const presRes = await fetch(`https://api.frame.io/v2/presentations/${shareToken}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (presRes.ok) {
+            const pres = await presRes.json();
+            assets = (pres.assets || []).map(a => ({
+              id: a.id, name: a.name, thumb: a.thumb, download_url: a.original,
+              filesize: a.filesize, duration: a.duration, media_type: 'video'
+            }));
+          } else {
+            return res.status(404).json({ error: 'Could not fetch assets from this link. Check the URL.' });
+          }
         }
       }
     } else {
