@@ -524,7 +524,7 @@ function FrameioConnectModal({ onClose, onConnected }) {
             {step === 'opened' && (
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-foreground">Step 2 — Copy the <span className="text-orange-400">code</span> from the URL bar</p>
-                <p className="text-xs text-muted-foreground">After logging in, you'll be redirected to weekly-gray.vercel.app — copy the <code className="text-orange-300">?code=...</code> value from the URL</p>
+                <p className="text-xs text-muted-foreground">After logging in, you'll be redirected to <code className="text-orange-300">{window.location.host}</code> — copy the <code className="text-orange-300">?code=...</code> value from the URL bar</p>
                 <input value={code} onChange={e => setCode(e.target.value)} placeholder="Paste code here..."
                   className="w-full bg-white/5 border border-border/40 rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-orange-500/50" />
                 <button onClick={exchange} disabled={!code.trim() || step === 'exchanging'}
@@ -556,6 +556,21 @@ export default function WeeklyPage() {
   const [showFioConnect, setShowFioConnect] = useState(false)
 
   useEffect(() => {
+    // Auto-detect Frame.io OAuth callback (?code= in URL)
+    const params = new URLSearchParams(window.location.search)
+    const oauthCode = params.get('code')
+    if (oauthCode) {
+      // Clean the URL without reloading
+      window.history.replaceState({}, '', window.location.pathname)
+      setShowFioConnect(true)
+      // Auto-exchange in background
+      fetch('/api/frameio/exchange-code', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: oauthCode })
+      }).then(r => r.json()).then(d => {
+        if (d.ok) { setFioConnected(true); setShowFioConnect(false) }
+      }).catch(() => {})
+    }
     fetch('/api/frameio/status').then(r => r.json()).then(d => setFioConnected(d.connected)).catch(() => setFioConnected(false))
   }, [])
 
