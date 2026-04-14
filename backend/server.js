@@ -1454,9 +1454,10 @@ app.post('/api/frameio/to-dropbox', async (req, res) => {
     // 1. Get Dropbox upload link
     const dbToken = await getDropboxToken();
     const sanitized = fileName.replace(/[^\w.\-_ ()]/g, '_');
-    const week = weekEnding || 'unknown';
+    const basePath = (process.env.DROPBOX_PATH ?? '/Weekly Reports').replace(/\/$/, '');
+    const folder = weekEnding ? weekFolder(weekEnding) : 'unknown';
     const member = memberName || 'unknown';
-    const dropboxPath = `${process.env.DROPBOX_PATH || '/Weekly'}/${week}/${member}/${sanitized}`;
+    const dropboxPath = `${basePath}/${folder}/${member}/${sanitized}`;
 
     // Fetch file from Frame.io
     const fileRes = await fetch(downloadUrl);
