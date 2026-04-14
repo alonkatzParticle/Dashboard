@@ -1414,39 +1414,23 @@ app.get('/api/frameio/debug-folder', async (req, res) => {
   }
 });
 
-// GET /api/frameio/stream?fileId=... — proxy Frame.io video stream for in-app playback
-app.get('/api/frameio/stream', async (req, res) => {
+// GET /api/frameio/media-url?fileId=... — returns signed inline/download URLs for client-side playback
+app.get('/api/frameio/media-url', async (req, res) => {
   try {
     const { fileId } = req.query;
     if (!fileId) return res.status(400).json({ error: 'fileId required' });
     const accountId = await kvOps.get('fio_account_id');
     if (!accountId) return res.status(400).json({ error: 'No account ID stored' });
-
-    // Must include media_links to get streaming/download URLs (V4 requirement)
     const file = await frameioGet(`/accounts/${accountId}/files/${fileId}?include=media_links.original`);
     const fd = file?.data || file;
     const ml = fd?.media_links?.original;
-    const downloadUrl = ml?.inline_url || ml?.download_url;
-    if (!downloadUrl) return res.status(404).json({ error: 'No stream URL available (media_links.original was null)' });
-
-    // Proxy with range support for video seeking
-    const rangeHeader = req.headers['range'];
-    const upstream = await fetch(downloadUrl, {
-      headers: rangeHeader ? { Range: rangeHeader } : {}
+    res.json({
+      inlineUrl: ml?.inline_url || null,
+      downloadUrl: ml?.download_url || null,
+      name: fd?.name,
     });
-
-    res.status(upstream.status);
-    const contentType = upstream.headers.get('content-type') || 'video/mp4';
-    const contentLength = upstream.headers.get('content-length');
-    const contentRange = upstream.headers.get('content-range');
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Accept-Ranges', 'bytes');
-    if (contentLength) res.setHeader('Content-Length', contentLength);
-    if (contentRange) res.setHeader('Content-Range', contentRange);
-    res.setHeader('Cache-Control', 'no-store');
-    upstream.body.pipe(res);
   } catch (err) {
-    console.error('[frameio/stream]', err);
+    console.error('[frameio/media-url]', err);
     res.status(500).json({ error: err.message });
   }
 });
