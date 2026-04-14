@@ -1422,11 +1422,12 @@ app.get('/api/frameio/stream', async (req, res) => {
     const accountId = await kvOps.get('fio_account_id');
     if (!accountId) return res.status(400).json({ error: 'No account ID stored' });
 
-    // Fetch file metadata to get download URL
-    const file = await frameioGet(`/accounts/${accountId}/files/${fileId}`);
+    // Must include media_links to get streaming/download URLs (V4 requirement)
+    const file = await frameioGet(`/accounts/${accountId}/files/${fileId}?include=media_links.original`);
     const fd = file?.data || file;
-    const downloadUrl = fd?.download_url || fd?.original || fd?.media?.h264_1080_best || fd?.media?.h264_720p;
-    if (!downloadUrl) return res.status(404).json({ error: 'No download URL available for this file' });
+    const ml = fd?.media_links?.original;
+    const downloadUrl = ml?.inline_url || ml?.download_url;
+    if (!downloadUrl) return res.status(404).json({ error: 'No stream URL available (media_links.original was null)' });
 
     // Proxy with range support for video seeking
     const rangeHeader = req.headers['range'];
@@ -1458,11 +1459,12 @@ app.post('/api/frameio/to-dropbox', async (req, res) => {
     const accountId = await kvOps.get('fio_account_id');
     if (!accountId) return res.status(400).json({ error: 'No account ID stored' });
 
-    // Get download URL from Frame.io
-    const file = await frameioGet(`/accounts/${accountId}/files/${fileId}`);
+    // Get download URL from Frame.io — must include media_links.original
+    const file = await frameioGet(`/accounts/${accountId}/files/${fileId}?include=media_links.original`);
     const fd = file?.data || file;
-    const downloadUrl = fd?.download_url || fd?.original;
-    if (!downloadUrl) return res.status(404).json({ error: 'No download URL for this file' });
+    const ml = fd?.media_links?.original;
+    const downloadUrl = ml?.download_url || ml?.inline_url;
+    if (!downloadUrl) return res.status(404).json({ error: 'No download URL for this file (media_links.original was null)' });
 
     // Stream from Frame.io → Dropbox upload-session
     // 1. Get Dropbox upload link
@@ -1551,14 +1553,14 @@ app.get('/api/frameio/assets', async (req, res) => {
             (a.media_type || '').includes('video') ||
             (a.head_version?.media_type || '').includes('video')
           );
-          // Fetch thumbnail for each from /files/{fileId}
+          // Fetch thumbnail for each from /files/{fileId}?include=media_links.thumbnail
           assets = await Promise.all(videoItems.map(async a => {
             const fileId = a.head_version?.id || a.id;
             let thumb = null;
             try {
-              const file = await frameioGet(`/accounts/${accountId}/files/${fileId}`);
+              const file = await frameioGet(`/accounts/${accountId}/files/${fileId}?include=media_links.thumbnail`);
               const fd = file?.data || file;
-              thumb = fd?.thumbnail_url || fd?.thumb_1280 || fd?.thumb_720 || fd?.thumb_540 || fd?.thumb;
+              thumb = fd?.media_links?.thumbnail?.url || fd?.thumbnail_url || fd?.thumb;
             } catch (_) {}
             return {
               id: a.id,
