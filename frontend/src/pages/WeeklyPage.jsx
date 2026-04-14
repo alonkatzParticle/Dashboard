@@ -392,7 +392,7 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
 }
 
 // ── WeeklyColumn ──────────────────────────────────────────────────────────────
-function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh }) {
+function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh, fioConnected }) {
   return (
     <div className="rounded-xl border border-border/40 bg-card overflow-hidden flex flex-col">
       <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between">
@@ -702,9 +702,9 @@ export default function WeeklyPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <WeeklyColumn title="Last Week" tasks={memberData.lastWeek} loaded={memberData.loaded} loading={loading}
                   onTaskClick={task => task.dropbox_link && setSelectedTask(task)}
-                  onRefresh={() => { setLoading(true); fetchTasks(true) }} />
+                  onRefresh={() => { setLoading(true); fetchTasks(true) }} fioConnected={fioConnected} />
                 <WeeklyColumn title="This Week" tasks={memberData.thisWeek} loaded={memberData.loaded} loading={loading}
-                  onRefresh={() => { setLoading(true); fetchTasks(true) }} />
+                  onRefresh={() => { setLoading(true); fetchTasks(true) }} fioConnected={fioConnected} />
               </div>
             </div>
           )}
