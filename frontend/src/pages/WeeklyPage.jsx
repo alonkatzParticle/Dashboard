@@ -453,13 +453,23 @@ function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh, f
                       </svg>
                     </a>
                   )}
-                  {task.frameio_link && fioConnected && (
-                    <button onClick={e => { e.stopPropagation(); setSelectedTask({ ...task, _fioMode: true }) }}
-                      title="Browse Frame.io files" className="text-orange-400 hover:text-orange-300 transition-colors">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                      </svg>
-                    </button>
+                  {task.frameio_link && (
+                    fioConnected ? (
+                      <button onClick={e => { e.stopPropagation(); setSelectedTask({ ...task, _fioMode: true }) }}
+                        title="Browse Frame.io files" className="text-orange-400 hover:text-orange-300 transition-colors">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                        </svg>
+                      </button>
+                    ) : (
+                      <a href={task.frameio_link} target="_blank" rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()} title="Open in Frame.io"
+                        className="text-orange-400 hover:text-orange-300 transition-colors">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                        </svg>
+                      </a>
+                    )
                   )}
                 </div>
               </div>
