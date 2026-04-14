@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { channelOps, messageOps, syncOps, syncLogOps, tokenOps, followUpOps, summaryOps, mondayOps, kvOps, initDb } = require('./db');
+const { channelOps, messageOps, syncOps, syncLogOps, tokenOps, followUpOps, summaryOps, mondayOps, kvOps, initDb, pool } = require('./db');
 const { startPoller, runSync, getSyncStatus } = require('./poller');
 const { generateSummary, getIsraelDate, getProcessingState } = require('./claude');
 const { clearBoardCache, loadBoardCacheFromDb, incrementalSync, fetchAllBoardTasks, fetchTeamTasks, fetchDailyActivity } = require('./monday_boards');
@@ -52,54 +52,49 @@ app.get('/api/status', async (req, res) => {
 });
 
 // GET /api/channels - list all synced channels
-app.get('/api/channels', (req, res) => {
-  const channels = channelOps.getAll();
-  const syncStates = syncOps.getAll();
-
-  const stateMap = {};
-  for (const s of syncStates) stateMap[s.channel_id] = s;
-
-  // Get latest message ts per channel for sorting
-  const latestTs = db.prepare(
-    `SELECT channel_id, MAX(CAST(ts AS REAL)) as last_ts FROM messages GROUP BY channel_id`
-  ).all();
-  const latestTsMap = {};
-  for (const r of latestTs) latestTsMap[r.channel_id] = r.last_ts;
-
-  const result = channels
-    .map(ch => ({
-      ...ch,
-      lastFetched: stateMap[ch.channel_id]?.last_fetched_at || null,
-      messageCount: stateMap[ch.channel_id]?.message_count || 0,
-      lastMessageTs: latestTsMap[ch.channel_id] || 0
-    }))
-    .sort((a, b) => b.lastMessageTs - a.lastMessageTs);
-
-  res.json(result);
+app.get('/api/channels', async (req, res) => {
+  try {
+    const channels = await channelOps.getAll();
+    const syncStates = await syncOps.getAll();
+    const stateMap = {};
+    for (const s of syncStates) stateMap[s.channel_id] = s;
+    const latestTsRows = await pool.query('SELECT channel_id, MAX(CAST(ts AS FLOAT)) as last_ts FROM messages GROUP BY channel_id');
+    const latestTsMap = {};
+    for (const r of latestTsRows.rows) latestTsMap[r.channel_id] = r.last_ts;
+    const result = (channels || [])
+      .map(ch => ({
+        ...ch,
+        lastFetched: stateMap[ch.channel_id]?.last_fetched_at || null,
+        messageCount: stateMap[ch.channel_id]?.message_count || 0,
+        lastMessageTs: latestTsMap[ch.channel_id] || 0
+      }))
+      .sort((a, b) => b.lastMessageTs - a.lastMessageTs);
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // GET /api/users - user ID → display name map for resolving @mentions in the UI
-app.get('/api/users', (req, res) => {
+app.get('/api/users', async (req, res) => {
   try {
-    const users = db.prepare('SELECT user_id, display_name FROM users WHERE display_name IS NOT NULL').all();
+    const { rows } = await pool.query('SELECT user_id, display_name FROM users WHERE display_name IS NOT NULL');
     const map = {};
-    for (const u of users) map[u.user_id] = u.display_name;
+    for (const u of rows) map[u.user_id] = u.display_name;
     res.json(map);
   } catch (err) { res.json({}); }
 });
 
 // GET /api/messages - get messages with optional filters
-app.get('/api/messages', (req, res) => {
-  const { channel, date, limit = 100 } = req.query;
-
-  let messages;
-  if (date) {
-    messages = messageOps.getForDay(date, channel || null);
-  } else {
-    messages = messageOps.getRecent(parseInt(limit), channel || null);
-  }
-
-  res.json(messages);
+app.get('/api/messages', async (req, res) => {
+  try {
+    const { channel, date, limit = 100 } = req.query;
+    let messages;
+    if (date) {
+      messages = await messageOps.getForDay(date, channel || null);
+    } else {
+      messages = await messageOps.getRecent(parseInt(limit), channel || null);
+    }
+    res.json(messages || []);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // POST /api/sync - manually trigger a sync (responds immediately, runs in background)
@@ -118,27 +113,29 @@ app.get('/api/sync/status', (req, res) => {
 });
 
 // GET /api/summary
-app.get('/api/summary', (req, res) => {
-  const today = getIsraelDate(0);
-  const cached = summaryOps.get(today);
-  res.json({
-    date: today, cached: !!cached,
-    summary: cached?.summary_text || null,
-    generatedAt: cached?.generated_at || null,
-    followUps: followUpOps.getAll('open'),
-    inProgress: followUpOps.getAll('in_progress'),
-    finished: followUpOps.getAll('finished'),
-    dismissed: followUpOps.getAll('dismissed'),
-    candidates: followUpOps.getAll('candidate')
-  });
+app.get('/api/summary', async (req, res) => {
+  try {
+    const today = getIsraelDate(0);
+    const cached = await summaryOps.get(today);
+    res.json({
+      date: today, cached: !!cached,
+      summary: cached?.summary_text || null,
+      generatedAt: cached?.generated_at || null,
+      followUps: await followUpOps.getAll('open'),
+      inProgress: await followUpOps.getAll('in_progress'),
+      finished: await followUpOps.getAll('finished'),
+      dismissed: await followUpOps.getAll('dismissed'),
+      candidates: await followUpOps.getAll('candidate')
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // POST /api/summary/reset — full analysis reset: unanalyze all messages + clear all tasks/summaries
-app.post('/api/summary/reset', (req, res) => {
+app.post('/api/summary/reset', async (req, res) => {
   try {
-    messageOps.markAllUnanalyzed();
-    followUpOps.clearAll();
-    summaryOps.clearAll();
+    await messageOps.markAllUnanalyzed();
+    await followUpOps.clearAll();
+    await summaryOps.clearAll();
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -158,125 +155,116 @@ app.post('/api/summary/generate', (req, res) => {
 });
 
 // GET /api/summary/status — poll this for progress
-app.get('/api/summary/status', (req, res) => {
-  const state = getProcessingState();
-  const today = getIsraelDate(0);
-  if (state.running) {
+app.get('/api/summary/status', async (req, res) => {
+  try {
+    const state = getProcessingState();
+    const today = getIsraelDate(0);
+    if (state.running) {
+      return res.json({
+        status: 'processing',
+        progress: { channelsDone: state.channelsDone, channelsTotal: state.channelsTotal, currentChannel: state.currentChannel }
+      });
+    }
+    if (state.lastResult) {
+      const result = state.lastResult;
+      result.dismissed = await followUpOps.getAll('dismissed');
+      result.candidates = await followUpOps.getAll('candidate');
+      return res.json({ status: 'done', result });
+    }
+    const cached = await summaryOps.get(today);
     return res.json({
-      status: 'processing',
-      progress: {
-        channelsDone: state.channelsDone,
-        channelsTotal: state.channelsTotal,
-        currentChannel: state.currentChannel
+      status: 'idle',
+      result: {
+        summary: cached?.summary_text || null,
+        followUps: await followUpOps.getAll('open'),
+        finished: await followUpOps.getAll('finished'),
+        dismissed: await followUpOps.getAll('dismissed'),
+        candidates: await followUpOps.getAll('candidate'),
+        generatedAt: cached?.generated_at || null
       }
     });
-  }
-  if (state.lastResult) {
-    const result = state.lastResult;
-    result.dismissed = followUpOps.getAll('dismissed');
-    result.candidates = followUpOps.getAll('candidate');
-    return res.json({ status: 'done', result });
-  }
-  // Idle — return cached data
-  const cached = summaryOps.get(today);
-  return res.json({
-    status: 'idle',
-    result: {
-      summary: cached?.summary_text || null,
-      followUps: followUpOps.getAll('open'),
-      finished: followUpOps.getAll('finished'),
-      dismissed: followUpOps.getAll('dismissed'),
-      candidates: followUpOps.getAll('candidate'),
-      generatedAt: cached?.generated_at || null
-    }
-  });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // Helper: return all list state after any mutation
-const allLists = () => ({
+const allLists = async () => ({
   ok: true,
-  followUps: followUpOps.getAll('open'),
-  inProgress: followUpOps.getAll('in_progress'),
-  finished: followUpOps.getAll('finished'),
-  dismissed: followUpOps.getAll('dismissed'),
-  candidates: followUpOps.getAll('candidate')
+  followUps: await followUpOps.getAll('open'),
+  inProgress: await followUpOps.getAll('in_progress'),
+  finished: await followUpOps.getAll('finished'),
+  dismissed: await followUpOps.getAll('dismissed'),
+  candidates: await followUpOps.getAll('candidate')
 });
 
 // GET /api/follow-ups - list follow-ups
-app.get('/api/follow-ups', (req, res) => {
-  const { status } = req.query;
-  res.json(followUpOps.getAll(status || null));
+app.get('/api/follow-ups', async (req, res) => {
+  try { res.json(await followUpOps.getAll(req.query.status || null)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // POST /api/follow-ups - manually add a follow-up
-app.post('/api/follow-ups', (req, res) => {
+app.post('/api/follow-ups', async (req, res) => {
   const { text, channel_name, context, priority, task_type } = req.body;
   if (!text) return res.status(400).json({ error: 'text is required' });
-  followUpOps.insert({ text, channel_name, context, priority: priority || 'medium', task_type: task_type || 'task', source: 'user' });
-  res.json({ ok: true, followUps: followUpOps.getAll('open') });
+  await followUpOps.insert({ text, channel_name, context, priority: priority || 'medium', task_type: task_type || 'task', source: 'user' });
+  res.json({ ok: true, followUps: await followUpOps.getAll('open') });
 });
-// Aliases: no-dash + POST for resolve/reopen (frontend convention)
-app.post('/api/followups', (req, res) => {
+app.post('/api/followups', async (req, res) => {
   const { text, channel_name, context, priority, task_type } = req.body;
   if (!text) return res.status(400).json({ error: 'text is required' });
-  followUpOps.insert({ text, channel_name, context, priority: priority || 'medium', task_type: task_type || 'task', source: 'user' });
-  res.json({ ok: true, followUps: followUpOps.getAll('open') });
+  await followUpOps.insert({ text, channel_name, context, priority: priority || 'medium', task_type: task_type || 'task', source: 'user' });
+  res.json({ ok: true, followUps: await followUpOps.getAll('open') });
 });
-app.post('/api/followups/:id/resolve', (req, res) => { followUpOps.resolve(parseInt(req.params.id), 'user'); res.json(allLists()); });
-app.post('/api/followups/:id/reopen',  (req, res) => { followUpOps.reopen(parseInt(req.params.id)); res.json(allLists()); });
-app.delete('/api/followups/:id',       (req, res) => { followUpOps.delete(parseInt(req.params.id)); res.json(allLists()); });
-app.patch('/api/followups/:id/status', (req, res) => {
+app.post('/api/followups/:id/resolve', async (req, res) => { await followUpOps.resolve(parseInt(req.params.id), 'user'); res.json(await allLists()); });
+app.post('/api/followups/:id/reopen',  async (req, res) => { await followUpOps.reopen(parseInt(req.params.id)); res.json(await allLists()); });
+app.delete('/api/followups/:id',       async (req, res) => { await followUpOps.delete(parseInt(req.params.id)); res.json(await allLists()); });
+app.patch('/api/followups/:id/status', async (req, res) => {
   const id = parseInt(req.params.id);
   const { status } = req.body;
   if (!['open', 'in_progress', 'done'].includes(status)) return res.status(400).json({ error: 'invalid status' });
   if (status === 'done') {
-    followUpOps.resolve(id, 'user');
+    await followUpOps.resolve(id, 'user');
   } else if (status === 'open') {
-    followUpOps.reopen(id);
+    await followUpOps.reopen(id);
   } else {
-    db.prepare("UPDATE follow_ups SET status = ? WHERE id = ?").run('in_progress', id);
+    await pool.query("UPDATE follow_ups SET status = $1 WHERE id = $2", ['in_progress', id]);
   }
-  res.json(allLists());
+  res.json(await allLists());
 });
 
-// PATCH /api/follow-ups/:id/resolve
-app.patch('/api/follow-ups/:id/resolve', (req, res) => {
-  followUpOps.resolve(parseInt(req.params.id), 'user');
-  res.json(allLists());
+app.patch('/api/follow-ups/:id/resolve', async (req, res) => {
+  await followUpOps.resolve(parseInt(req.params.id), 'user');
+  res.json(await allLists());
 });
-// PATCH /api/follow-ups/:id/reopen
-app.patch('/api/follow-ups/:id/reopen', (req, res) => {
-  followUpOps.reopen(parseInt(req.params.id));
-  res.json(allLists());
+app.patch('/api/follow-ups/:id/reopen', async (req, res) => {
+  await followUpOps.reopen(parseInt(req.params.id));
+  res.json(await allLists());
 });
-// PATCH /api/follow-ups/:id/restore - dismissed → open
-app.patch('/api/follow-ups/:id/restore', (req, res) => {
-  followUpOps.restore(parseInt(req.params.id));
-  res.json(allLists());
+app.patch('/api/follow-ups/:id/restore', async (req, res) => {
+  await followUpOps.restore(parseInt(req.params.id));
+  res.json(await allLists());
 });
-// PATCH /api/follow-ups/:id/confirm - candidate → open (or finished if pre_resolved)
-app.patch('/api/follow-ups/:id/confirm', (req, res) => {
+app.patch('/api/follow-ups/:id/confirm', async (req, res) => {
   const id = parseInt(req.params.id);
-  const task = db.prepare('SELECT pre_resolved FROM follow_ups WHERE id = ?').get(id);
+  const { rows } = await pool.query('SELECT pre_resolved FROM follow_ups WHERE id = $1', [id]);
+  const task = rows[0];
   if (task?.pre_resolved) {
-    followUpOps.confirmAsResolved(id);
+    await followUpOps.confirmAsResolved(id);
   } else {
-    followUpOps.confirm(id);
+    await followUpOps.confirm(id);
   }
-  res.json(allLists());
+  res.json(await allLists());
 });
-// DELETE /api/follow-ups/:id - soft delete (dismiss)
-app.delete('/api/follow-ups/:id', (req, res) => {
-  followUpOps.delete(parseInt(req.params.id));
-  res.json(allLists());
+app.delete('/api/follow-ups/:id', async (req, res) => {
+  await followUpOps.delete(parseInt(req.params.id));
+  res.json(await allLists());
 });
 
-// PATCH /api/follow-ups/:id/priority - update priority
-app.patch('/api/follow-ups/:id/priority', (req, res) => {
+app.patch('/api/follow-ups/:id/priority', async (req, res) => {
   const { priority } = req.body;
   const valid = ['low', 'medium', 'high', 'critical'];
   if (!valid.includes(priority)) return res.status(400).json({ error: 'invalid priority' });
-  followUpOps.updatePriority(parseInt(req.params.id), priority);
+  await followUpOps.updatePriority(parseInt(req.params.id), priority);
   res.json({ ok: true });
 });
 
@@ -301,7 +289,7 @@ app.get('/api/summary/generate', async (req, res) => {
   try {
     await generateSummary(force, sendProgress);
     const today = getIsraelDate(0);
-    const cached = summaryOps.get(today);
+    const cached = await summaryOps.get(today);
     res.write(`event: done\ndata: ${JSON.stringify({ ok: true, summary: cached?.summary_text || null })}\n\n`);
   } catch (err) {
     res.write(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`);
@@ -464,8 +452,8 @@ app.get('/api/status-report', async (req, res) => {
     const token = process.env.MONDAY_API_TOKEN;
     if (!token) return res.status(500).json({ error: 'MONDAY_API_TOKEN not set' });
     const force = req.query.force === 'true';
-    const boards = mondayOps.getBoards();
-    const members = mondayOps.getMembers();
+    const boards = await mondayOps.getBoards();
+    const members = await mondayOps.getMembers();
     const boardIds = boards.map(b => b.board_id);
     if (boardIds.length === 0) return res.json({ tasksByBoard: {}, completedToday: [] });
     if (force) clearBoardCache();
@@ -628,8 +616,8 @@ app.get('/api/status-report/daily', async (req, res) => {
     const token = process.env.MONDAY_API_TOKEN;
     if (!token) return res.status(500).json({ error: 'MONDAY_API_TOKEN not set' });
     const force = req.query.force === 'true';
-    const boards = mondayOps.getBoards();
-    const members = mondayOps.getMembers();
+    const boards = await mondayOps.getBoards();
+    const members = await mondayOps.getMembers();
     const boardIds = boards.map(b => b.board_id);
     if (boardIds.length === 0) return res.json({ completedToday: [], inProgress: [], date: new Date().toISOString().slice(0, 10) });
     if (force) clearBoardCache();
