@@ -9,6 +9,16 @@ import StudioPage from './pages/StudioPage'
 import SettingsPage from './pages/SettingsPage'
 
 export default function App() {
+  // Frame.io OAuth: Adobe redirects back here with ?code=... regardless of path.
+  // Forward it to /weekly so WeeklyPage handles the exchange.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    if (code && !window.location.pathname.includes('/weekly')) {
+      window.location.replace('/weekly?' + params.toString())
+    }
+  }, [])
+
   const [status, setStatus] = useState(null)
   const [isSyncing, setIsSyncing] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
