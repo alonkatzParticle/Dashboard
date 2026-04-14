@@ -1383,24 +1383,27 @@ app.get('/api/frameio/assets', async (req, res) => {
       const projectMatch = reviewUrl.match(/next\.frame\.io\/project\/([a-f0-9-]+)(?:\/([a-f0-9-]+))?/i);
       if (projectMatch) {
         const projId = projectMatch[1];
-        const folderId = projectMatch[2]; // may be undefined if URL ends at project
+        const folderId = projectMatch[2];
         if (!accountId) return res.status(400).json({ error: 'No account ID stored. Re-authorize.' });
         try {
-          let data;
+          let rawItems = [];
           if (folderId) {
-            // Try to list children of the specific folder/asset
-            data = await frameioGet(`/accounts/${accountId}/assets/${folderId}/children?type=file&page_size=50`);
-          } else {
-            data = await frameioGet(`/accounts/${accountId}/projects/${projId}/assets?type=file&page_size=50`);
+            // Fetch children of the specific folder asset (no type filter — V4 doesn't support it)
+            const data = await frameioGet(`/accounts/${accountId}/assets/${folderId}/children?page_size=50`);
+            rawItems = data.data || data || [];
           }
-          assets = (data.data || data || []).filter(a => a.media_type === 'video' || (a.media_type || '').includes('video'));
-          // If no files found in folder, fall back to project-level listing
-          if (assets.length === 0 && folderId) {
-            const fallback = await frameioGet(`/accounts/${accountId}/projects/${projId}/assets?type=file&page_size=50`);
-            assets = (fallback.data || fallback || []).filter(a => a.media_type === 'video' || (a.media_type || '').includes('video'));
+          // Fall back to project-level listing if nothing found
+          if (rawItems.length === 0) {
+            const fallback = await frameioGet(`/accounts/${accountId}/projects/${projId}/assets?page_size=50`);
+            rawItems = fallback.data || fallback || [];
           }
+          // Filter to video assets (or anything with a thumbnail if media_type is absent)
+          assets = rawItems.filter(a =>
+            !a.media_type || a.media_type === 'video' || (a.media_type || '').includes('video') ||
+            a.thumb_1280 || a.thumb_720 || a.thumb
+          );
         } catch (e) {
-          return res.status(400).json({ error: `Frame.io project fetch failed: ${e.message}` });
+          return res.status(400).json({ error: `Frame.io fetch failed: ${e.message}` });
         }
 
       // ── app.frame.io/reviews/{token} or /shares/{token} ───────────────────
