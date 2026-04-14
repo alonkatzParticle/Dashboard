@@ -1461,10 +1461,31 @@ app.get('/api/frameio/assets', async (req, res) => {
               console.log('[frameio] project root folder fallback failed:', projErr.message);
             }
           }
-          // Filter to video files (or anything with a thumbnail)
-          assets = rawItems.filter(a =>
-            (a.media_type || '').includes('video') || a.thumb_1280 || a.thumb_720 || a.thumb
+          // V4 items are version_stacks wrapping files — accept them and normalize
+          const videoItems = rawItems.filter(a =>
+            a.type === 'version_stack' ||
+            (a.media_type || '').includes('video') ||
+            (a.head_version?.media_type || '').includes('video')
           );
+          // Fetch thumbnail for each from /files/{fileId}
+          assets = await Promise.all(videoItems.map(async a => {
+            const fileId = a.head_version?.id || a.id;
+            let thumb = null;
+            try {
+              const file = await frameioGet(`/accounts/${accountId}/files/${fileId}`);
+              const fd = file?.data || file;
+              thumb = fd?.thumbnail_url || fd?.thumb_1280 || fd?.thumb_720 || fd?.thumb_540 || fd?.thumb;
+            } catch (_) {}
+            return {
+              id: a.id,
+              file_id: fileId,
+              name: a.name,
+              media_type: a.head_version?.media_type || a.media_type || 'video',
+              duration: a.head_version?.duration || a.duration,
+              view_url: a.view_url || (a.head_version?.view_url),
+              thumb,
+            };
+          }));
         } catch (e) {
           return res.status(400).json({ error: `Frame.io fetch failed: ${e.message}` });
         }

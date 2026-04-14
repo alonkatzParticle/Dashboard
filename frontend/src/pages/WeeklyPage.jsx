@@ -208,10 +208,11 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
             {!fioLoading && !fioError && fioAssets.length > 0 && (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {fioAssets.map(asset => {
-                  const thumb = asset.thumb_1280 || asset.thumb_720 || asset.thumb_540 || asset.thumb
+                  const thumb = asset.thumb
                   const dur = asset.duration ? `${Math.floor(asset.duration / 60)}:${String(Math.floor(asset.duration % 60)).padStart(2, '0')}` : null
+                  const href = asset.view_url || task.frameio_link
                   return (
-                    <a key={asset.id} href={task.frameio_link} target="_blank" rel="noopener noreferrer"
+                    <a key={asset.id} href={href} target="_blank" rel="noopener noreferrer"
                       className="relative group aspect-square rounded-lg overflow-hidden border border-orange-500/20 bg-white/5 block">
                       {thumb
                         ? <img src={thumb} alt={asset.name} className="w-full h-full object-cover" />
