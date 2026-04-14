@@ -1337,17 +1337,40 @@ app.post('/api/frameio/exchange-code', async (req, res) => {
     await kvOps.set('fio_access_token', data.access_token);
     await kvOps.set('fio_token_expiry', String(Date.now() + (data.expires_in * 1000) - 60000));
     if (data.refresh_token) await kvOps.set('fio_refresh_token', data.refresh_token);
-    // Fetch account ID and store it
-    const token = data.access_token;
-    const meRes = await fetch(`${FRAMEIO_API}/accounts`, { headers: { Authorization: `Bearer ${token}` } });
-    if (meRes.ok) {
-      const me = await meRes.json();
-      const accountId = me?.data?.[0]?.id || me?.[0]?.id;
-      if (accountId) await kvOps.set('fio_account_id', accountId);
+    // Fetch and store account ID
+    try {
+      const accountId = await fetchAndStoreAccountId(data.access_token);
+      console.log('[frameio/exchange-code] stored accountId:', accountId);
+    } catch (e) {
+      console.error('[frameio/exchange-code] failed to fetch accountId:', e.message);
     }
     res.json({ ok: true });
   } catch (err) {
     console.error('[frameio/exchange-code]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Helper: fetch account ID from Frame.io and persist it
+async function fetchAndStoreAccountId(accessToken) {
+  const token = accessToken || await getFrameioToken();
+  const r = await fetch(`${FRAMEIO_API}/accounts`, { headers: { Authorization: `Bearer ${token}` } });
+  const body = await r.json();
+  console.log('[frameio] GET /accounts raw:', JSON.stringify(body).slice(0, 300));
+  // Handle both {data:[{id}]} and [{id}] shapes
+  const list = body?.data || (Array.isArray(body) ? body : null);
+  const accountId = list?.[0]?.id || body?.id;
+  if (!accountId) throw new Error('Could not extract account ID from: ' + JSON.stringify(body).slice(0, 200));
+  await kvOps.set('fio_account_id', accountId);
+  return accountId;
+}
+
+// GET /api/frameio/fix-account — re-fetch and store account ID from current token
+app.get('/api/frameio/fix-account', async (req, res) => {
+  try {
+    const accountId = await fetchAndStoreAccountId();
+    res.json({ ok: true, accountId });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -1369,8 +1392,11 @@ app.delete('/api/frameio/disconnect', async (req, res) => {
 app.get('/api/frameio/assets', async (req, res) => {
   try {
     const { reviewUrl, projectId } = req.query;
+    let accountId = await kvOps.get('fio_account_id');
+    if (!accountId) {
+      try { accountId = await fetchAndStoreAccountId(); } catch (e) { console.error('[frameio/assets] failed to fetch accountId:', e.message); }
+    }
     let assets = [];
-    const accountId = await kvOps.get('fio_account_id');
 
     if (projectId) {
       // Explicit projectId param
