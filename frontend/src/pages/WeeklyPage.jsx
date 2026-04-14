@@ -140,7 +140,7 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
             ) : (
               <p className="text-xs text-muted-foreground mb-0.5">{view === 'frameio' ? 'Frame.io' : 'Dropbox Files'}</p>
             )}
-            <h2 className="text-sm font-semibold text-foreground leading-snug truncate">{task.name}</h2>
+            <h2 className="text-sm font-semibold text-white leading-snug truncate">{task.name}</h2>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none p-1">✕</button>
         </div>
