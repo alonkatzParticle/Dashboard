@@ -482,10 +482,10 @@ function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh, f
 }
 
 // ── FrameioConnectModal ────────────────────────────────────────────────────────
-function FrameioConnectModal({ onClose, onConnected }) {
-  const [step, setStep] = useState('idle') // idle | opened | exchanging | done | error
-  const [code, setCode] = useState('')
-  const [error, setError] = useState('')
+function FrameioConnectModal({ onClose, onConnected, initialError, initialCode }) {
+  const [step, setStep] = useState(initialCode ? 'opened' : 'idle')
+  const [code, setCode] = useState(initialCode || '')
+  const [error, setError] = useState(initialError || '')
 
   const openAuth = async () => {
     const r = await fetch('/api/frameio/auth-url')
@@ -565,21 +565,24 @@ export default function WeeklyPage() {
   const [fioConnected, setFioConnected] = useState(null) // null=loading, false=not connected, true=connected
   const [showFioConnect, setShowFioConnect] = useState(false)
 
+  const [fioAutoCode, setFioAutoCode] = useState('')
+  const [fioAutoError, setFioAutoError] = useState('')
+
   useEffect(() => {
     // Auto-detect Frame.io OAuth callback (?code= in URL)
     const params = new URLSearchParams(window.location.search)
     const oauthCode = params.get('code')
     if (oauthCode) {
-      // Clean the URL without reloading
       window.history.replaceState({}, '', window.location.pathname)
+      setFioAutoCode(oauthCode)
       setShowFioConnect(true)
-      // Auto-exchange in background
       fetch('/api/frameio/exchange-code', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: oauthCode })
       }).then(r => r.json()).then(d => {
         if (d.ok) { setFioConnected(true); setShowFioConnect(false) }
-      }).catch(() => {})
+        else setFioAutoError(d.error || 'Token exchange failed')
+      }).catch(e => setFioAutoError(e.message))
     }
     fetch('/api/frameio/status').then(r => r.json()).then(d => setFioConnected(d.connected)).catch(() => setFioConnected(false))
   }, [])
@@ -653,7 +656,7 @@ export default function WeeklyPage() {
           </button>
         </div>
       )}
-      {showFioConnect && <FrameioConnectModal onClose={() => setShowFioConnect(false)} onConnected={() => { setFioConnected(true); setShowFioConnect(false) }} />}
+      {showFioConnect && <FrameioConnectModal onClose={() => setShowFioConnect(false)} onConnected={() => { setFioConnected(true); setShowFioConnect(false) }} initialError={fioAutoError} initialCode={fioAutoCode} />}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-foreground">Weekly Report</h1>
