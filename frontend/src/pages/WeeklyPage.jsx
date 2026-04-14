@@ -4,6 +4,11 @@ import { useBackgroundSync } from '../lib/utils'
 
 // ── DropboxPreviewModal ───────────────────────────────────────────────────────
 function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
+  const hasDropbox = !!task.dropbox_link
+  const hasFio = !!task.frameio_link
+  const [view, setView] = useState(task._fioMode || !hasDropbox ? 'frameio' : 'dropbox')
+
+  // ── Dropbox state
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -12,8 +17,13 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
   const [copied, setCopied] = useState(new Set())
   const [lightbox, setLightbox] = useState(null)
 
+  // ── Frame.io state
+  const [fioAssets, setFioAssets] = useState([])
+  const [fioLoading, setFioLoading] = useState(false)
+  const [fioError, setFioError] = useState('')
+
   useEffect(() => {
-    if (!task.dropbox_link) return
+    if (!hasDropbox) return
     setLoading(true); setError('')
     fetch('/api/dropbox/folder?url=' + encodeURIComponent(task.dropbox_link))
       .then(r => r.json())
@@ -21,6 +31,16 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
   }, [task.dropbox_link])
+
+  useEffect(() => {
+    if (!hasFio || fioAssets.length > 0) return
+    setFioLoading(true); setFioError('')
+    fetch('/api/frameio/assets?reviewUrl=' + encodeURIComponent(task.frameio_link))
+      .then(r => r.json())
+      .then(d => { if (d.error) throw new Error(d.error); setFioAssets(d.assets || []) })
+      .catch(e => setFioError(String(e)))
+      .finally(() => setFioLoading(false))
+  }, [task.frameio_link, view])
 
   const mediaFiles = files.filter(f => f.is_image || f.is_video)
   const lbIdx = lightbox ? mediaFiles.findIndex(f => f.name === lightbox.name) : -1
@@ -67,77 +87,155 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
       <div className="bg-[#1a1a2e] border border-white/10 w-full max-w-2xl max-h-[85vh] rounded-t-2xl sm:rounded-2xl flex flex-col shadow-2xl">
         <div className="flex items-start justify-between px-5 py-4 border-b border-white/10 shrink-0">
           <div className="min-w-0 flex-1 pr-4">
-            <p className="text-xs text-muted-foreground mb-0.5">Dropbox Files</p>
+            {/* Tab toggle — only when both links exist */}
+            {hasDropbox && hasFio ? (
+              <div className="flex gap-1 mb-2">
+                <button onClick={() => setView('dropbox')}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    view === 'dropbox' ? 'bg-[#0061FE]/20 text-[#0061FE]' : 'text-muted-foreground hover:text-foreground'
+                  }`}>📁 Dropbox</button>
+                <button onClick={() => setView('frameio')}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    view === 'frameio' ? 'bg-orange-500/20 text-orange-400' : 'text-muted-foreground hover:text-foreground'
+                  }`}>▶ Frame.io</button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground mb-0.5">{view === 'frameio' ? 'Frame.io' : 'Dropbox Files'}</p>
+            )}
             <h2 className="text-sm font-semibold text-foreground leading-snug truncate">{task.name}</h2>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none p-1">✕</button>
         </div>
-        <div className="flex-1 overflow-y-auto p-5">
-          {loading && (
-            <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
-              <div className="h-5 w-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-              <span className="text-sm">Loading files...</span>
-            </div>
-          )}
-          {!loading && error && <p className="text-sm text-red-400 py-4">{error}</p>}
-          {!loading && !error && files.length === 0 && <p className="text-sm text-muted-foreground py-4">No files found.</p>}
-          {!loading && !error && files.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {files.map(file => {
-                const isMedia = file.is_image || file.is_video
-                const isSelected = selected.has(file.name)
-                const isCopied = copied.has(file.name)
-                if (isMedia) return (
-                  <div key={file.name} className="relative group aspect-square rounded-lg overflow-hidden border border-white/10 bg-white/5">
-                    <button className="absolute inset-0 w-full h-full focus:outline-none" onClick={() => setLightbox(file)}>
-                      <img src={thumbUrl(file)} alt={file.name} className="w-full h-full object-cover" />
-                      {file.is_video && (
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                          <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
-                            <span className="text-white text-sm pl-0.5">▶</span>
+        {/* ── DROPBOX VIEW ── */}
+        {view === 'dropbox' && (
+          <>
+            <div className="flex-1 overflow-y-auto p-5">
+              {loading && (
+                <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
+                  <div className="h-5 w-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  <span className="text-sm">Loading files...</span>
+                </div>
+              )}
+              {!loading && error && <p className="text-sm text-red-400 py-4">{error}</p>}
+              {!loading && !error && files.length === 0 && <p className="text-sm text-muted-foreground py-4">No files found.</p>}
+              {!loading && !error && files.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {files.map(file => {
+                    const isMedia = file.is_image || file.is_video
+                    const isSelected = selected.has(file.name)
+                    const isCopied = copied.has(file.name)
+                    if (isMedia) return (
+                      <div key={file.name} className="relative group aspect-square rounded-lg overflow-hidden border border-white/10 bg-white/5">
+                        <button className="absolute inset-0 w-full h-full focus:outline-none" onClick={() => setLightbox(file)}>
+                          <img src={thumbUrl(file)} alt={file.name} className="w-full h-full object-cover" />
+                          {file.is_video && (
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                              <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
+                                <span className="text-white text-sm pl-0.5">▶</span>
+                              </div>
+                            </div>
+                          )}
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end pointer-events-none">
+                            <p className="w-full text-white text-xs px-2 py-1 bg-black/50 translate-y-full group-hover:translate-y-0 transition-transform truncate">{file.name}</p>
                           </div>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end pointer-events-none">
-                        <p className="w-full text-white text-xs px-2 py-1 bg-black/50 translate-y-full group-hover:translate-y-0 transition-transform truncate">{file.name}</p>
+                        </button>
+                        {!isCopied && (
+                          <button onClick={e => { e.stopPropagation(); toggleSelect(file.name) }}
+                            className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'bg-white/80 border-white/80 opacity-0 group-hover:opacity-100'}`}>
+                            {isSelected && <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                          </button>
+                        )}
+                        {isCopied && (
+                          <div className="absolute inset-0 bg-green-600/70 flex flex-col items-center justify-center gap-1 pointer-events-none">
+                            <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            <span className="text-white text-xs font-medium">Added</span>
+                          </div>
+                        )}
                       </div>
-                    </button>
-                    {!isCopied && (
-                      <button onClick={e => { e.stopPropagation(); toggleSelect(file.name) }}
-                        className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'bg-white/80 border-white/80 opacity-0 group-hover:opacity-100'}`}>
-                        {isSelected && <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                      </button>
-                    )}
-                    {isCopied && (
-                      <div className="absolute inset-0 bg-green-600/70 flex flex-col items-center justify-center gap-1 pointer-events-none">
-                        <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                        <span className="text-white text-xs font-medium">Added</span>
+                    )
+                    return (
+                      <div key={file.name} className="rounded-lg border border-white/10 bg-white/5 aspect-square flex flex-col items-center justify-center gap-2 p-3">
+                        <span className="text-2xl">📄</span>
+                        <p className="text-xs text-muted-foreground text-center line-clamp-2 break-all">{file.name}</p>
                       </div>
-                    )}
-                  </div>
-                )
-                return (
-                  <div key={file.name} className="rounded-lg border border-white/10 bg-white/5 aspect-square flex flex-col items-center justify-center gap-2 p-3">
-                    <span className="text-2xl">📄</span>
-                    <p className="text-xs text-muted-foreground text-center line-clamp-2 break-all">{file.name}</p>
-                  </div>
-                )
-              })}
+                    )
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        {!loading && !error && mediaFiles.length > 0 && (
-          <div className="border-t border-white/10 px-5 py-3 flex items-center justify-between shrink-0">
-            <p className="text-xs text-muted-foreground">
-              {selected.size > 0 ? `${selected.size} selected` : 'Select files to add to Weekly'}
-            </p>
-            <button onClick={addToWeekly} disabled={selected.size === 0 || copying}
-              className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-40 transition-colors hover:bg-primary/80">
-              {copying && <div className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />}
-              Add to Weekly
-            </button>
+            {!loading && !error && mediaFiles.length > 0 && (
+              <div className="border-t border-white/10 px-5 py-3 flex items-center justify-between shrink-0">
+                <p className="text-xs text-muted-foreground">
+                  {selected.size > 0 ? `${selected.size} selected` : 'Select files to add to Weekly'}
+                </p>
+                <button onClick={addToWeekly} disabled={selected.size === 0 || copying}
+                  className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-40 transition-colors hover:bg-primary/80">
+                  {copying && <div className="h-3.5 w-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />}
+                  Add to Weekly
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── FRAME.IO VIEW ── */}
+        {view === 'frameio' && (
+          <div className="flex-1 overflow-y-auto p-5">
+            {fioLoading && (
+              <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
+                <div className="h-5 w-5 rounded-full border-2 border-orange-400 border-t-transparent animate-spin" />
+                <span className="text-sm">Loading Frame.io assets...</span>
+              </div>
+            )}
+            {!fioLoading && fioError && (
+              <div className="py-4 space-y-2">
+                <p className="text-sm text-red-400">{fioError}</p>
+                <a href={task.frameio_link} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-orange-400 hover:text-orange-300">
+                  Open review link directly →
+                </a>
+              </div>
+            )}
+            {!fioLoading && !fioError && fioAssets.length === 0 && (
+              <div className="py-4 space-y-2">
+                <p className="text-sm text-muted-foreground">No video assets found in this Frame.io link.</p>
+                <a href={task.frameio_link} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-orange-400 hover:text-orange-300">
+                  Open review link directly →
+                </a>
+              </div>
+            )}
+            {!fioLoading && !fioError && fioAssets.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {fioAssets.map(asset => {
+                  const thumb = asset.thumb_1280 || asset.thumb_720 || asset.thumb_540 || asset.thumb
+                  const dur = asset.duration ? `${Math.floor(asset.duration / 60)}:${String(Math.floor(asset.duration % 60)).padStart(2, '0')}` : null
+                  return (
+                    <a key={asset.id} href={task.frameio_link} target="_blank" rel="noopener noreferrer"
+                      className="relative group aspect-square rounded-lg overflow-hidden border border-orange-500/20 bg-white/5 block">
+                      {thumb
+                        ? <img src={thumb} alt={asset.name} className="w-full h-full object-cover" />
+                        : <div className="w-full h-full flex items-center justify-center text-4xl">🎬</div>
+                      }
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center group-hover:bg-orange-500/80 transition-colors">
+                          <span className="text-white text-sm pl-0.5">▶</span>
+                        </div>
+                      </div>
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-end pointer-events-none">
+                        <div className="w-full px-2 py-1.5 bg-black/60 translate-y-full group-hover:translate-y-0 transition-transform">
+                          <p className="text-white text-xs truncate">{asset.name}</p>
+                          {dur && <p className="text-orange-300 text-[10px]">{dur}</p>}
+                        </div>
+                      </div>
+                    </a>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
+
       </div>
       {lightbox && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90"
@@ -417,7 +515,7 @@ function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh, f
           <div className="space-y-2">
             {tasks.map(task => (
               <div key={task.id} onClick={() => onTaskClick && onTaskClick(task)}
-                className={"flex items-start gap-3 p-2.5 rounded-lg bg-white/[0.03] border border-border/20 transition-colors " + (onTaskClick && task.dropbox_link ? 'cursor-pointer hover:bg-white/[0.08] hover:border-primary/30' : 'hover:bg-white/[0.06]')}>
+                className={"flex items-start gap-3 p-2.5 rounded-lg bg-white/[0.03] border border-border/20 transition-colors " + (onTaskClick && (task.dropbox_link || task.frameio_link) ? 'cursor-pointer hover:bg-white/[0.08] hover:border-primary/30' : 'hover:bg-white/[0.06]')}>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <p className="text-sm text-foreground font-medium leading-snug">{task.name}</p>
@@ -714,7 +812,7 @@ export default function WeeklyPage() {
               <WeeklyFilesPreview memberName={activeMember.name} weekEnding={dates.nextWeekEnd} />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <WeeklyColumn title="Last Week" tasks={memberData.lastWeek} loaded={memberData.loaded} loading={loading}
-                  onTaskClick={task => task.dropbox_link && setSelectedTask(task)}
+                  onTaskClick={task => (task.dropbox_link || task.frameio_link) && setSelectedTask(task)}
                   onRefresh={() => { setLoading(true); fetchTasks(true) }} fioConnected={fioConnected} />
                 <WeeklyColumn title="This Week" tasks={memberData.thisWeek} loaded={memberData.loaded} loading={loading}
                   onRefresh={() => { setLoading(true); fetchTasks(true) }} fioConnected={fioConnected} />
