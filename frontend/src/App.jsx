@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { Sidebar } from './components/Sidebar'
-import TasksPage from './pages/TasksPage'
-import StandupPage from './pages/StandupPage'
-import WeeklyPage from './pages/WeeklyPage'
+import { AdminProvider } from './lib/useAdmin'
+import { Sidebar }       from './components/Sidebar'
+import { AdminGuard, UnlockButton } from './components/AdminGuard'
+import TasksPage        from './pages/TasksPage'
+import StandupPage      from './pages/StandupPage'
+import WeeklyPage       from './pages/WeeklyPage'
 import StatusReportPage from './pages/StatusReportPage'
-import StudioPage from './pages/StudioPage'
-import SettingsPage from './pages/SettingsPage'
+import StudioPage       from './pages/StudioPage'
+import SettingsPage     from './pages/SettingsPage'
 
 export default function App() {
   // Frame.io OAuth: Adobe redirects back here with ?code=... regardless of path.
@@ -19,7 +21,7 @@ export default function App() {
     }
   }, [])
 
-  const [status, setStatus] = useState(null)
+  const [status, setStatus]       = useState(null)
   const [isSyncing, setIsSyncing] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
   const [followUps, setFollowUps] = useState([])
@@ -35,10 +37,8 @@ export default function App() {
     setIsSyncing(true)
     try {
       await fetch('/api/sync', { method: 'POST' })
-      // Poll until done — check immediately first, then every 2s, max 10 min
       const maxWait = Date.now() + 10 * 60 * 1000
       while (Date.now() < maxWait) {
-        // Fetch with a 5s timeout so a hung backend doesn't freeze the loop
         const ctrl = new AbortController()
         const t = setTimeout(() => ctrl.abort(), 5000)
         const s = await fetch('/api/sync/status', { signal: ctrl.signal })
@@ -70,25 +70,34 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
-      <div className="flex h-screen overflow-hidden bg-background text-foreground">
-        <Sidebar status={status}
-          onSync={handleSync} isSyncing={isSyncing}
-          onReset={handleReset} isResetting={isResetting}
-          followUps={followUps} />
-        <main className="flex-1 overflow-auto p-6">
-          <Routes>
-            <Route path="/" element={<Navigate to="/tasks" replace />} />
-            <Route path="/tasks"   element={<TasksPage />} />
-            <Route path="/standup" element={<StandupPage />} />
-            <Route path="/weekly"  element={<WeeklyPage />} />
-            <Route path="/status"  element={<StatusReportPage />} />
-            <Route path="/studio"   element={<StudioPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*"         element={<Navigate to="/tasks" replace />} />
-          </Routes>
-        </main>
-      </div>
-    </BrowserRouter>
+    <AdminProvider>
+      <BrowserRouter>
+        <div className="flex h-screen overflow-hidden bg-background text-foreground">
+          <Sidebar status={status}
+            onSync={handleSync} isSyncing={isSyncing}
+            onReset={handleReset} isResetting={isResetting}
+            followUps={followUps} />
+          <main className="flex-1 overflow-auto p-6">
+            <Routes>
+              {/* Default redirect — restricted users land on /weekly */}
+              <Route path="/"        element={<Navigate to="/weekly" replace />} />
+              <Route path="/weekly"  element={<WeeklyPage />} />
+
+              {/* Admin-only routes — redirect to /weekly if restricted & not unlocked */}
+              <Route path="/tasks"    element={<AdminGuard><TasksPage /></AdminGuard>} />
+              <Route path="/standup"  element={<AdminGuard><StandupPage /></AdminGuard>} />
+              <Route path="/status"   element={<AdminGuard><StatusReportPage /></AdminGuard>} />
+              <Route path="/studio"   element={<AdminGuard><StudioPage /></AdminGuard>} />
+              <Route path="/settings" element={<AdminGuard><SettingsPage /></AdminGuard>} />
+
+              {/* Catch-all also goes to weekly (not tasks) so restricted users never redirect to a protected page */}
+              <Route path="*"         element={<Navigate to="/weekly" replace />} />
+            </Routes>
+          </main>
+        </div>
+        {/* Fixed lock icon — only visible when ADMIN_PASSWORD is set */}
+        <UnlockButton />
+      </BrowserRouter>
+    </AdminProvider>
   )
 }

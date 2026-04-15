@@ -4,6 +4,7 @@ import {
   CheckSquare, Mic, BarChart2, Target, Palette,
   RefreshCw, Settings, AlertTriangle, MessageSquare
 } from 'lucide-react'
+import { useAdmin } from '../lib/useAdmin'
 
 const NAV_ALON = [
   { id: 'tasks',   icon: CheckSquare, label: 'Tasks'   },
@@ -17,6 +18,7 @@ const NAV_TEAM = [
 ]
 
 export function Sidebar({ status, onSync, isSyncing, onReset, isResetting, followUps }) {
+  const { isAdmin, isRestricted } = useAdmin()
   const navigate = useNavigate()
   const location = useLocation()
   const activePage = location.pathname.replace('/', '') || 'tasks'
@@ -28,6 +30,10 @@ export function Sidebar({ status, onSync, isSyncing, onReset, isResetting, follo
     return () => document.removeEventListener('mousedown', handler)
   }, [])
   const openCount = followUps.filter(f => f.status !== 'done' && f.status !== 'finished').length
+
+  // In restricted mode (ADMIN_PASSWORD set) and not yet unlocked — hide sidebar entirely
+  if (isRestricted && !isAdmin) return null
+
   return (
     <aside style={{ width: 220, minWidth: 220 }} className="flex flex-col h-screen bg-sidebar border-r-2 border-[rgba(255,255,255,0.10)]">
       <div className="px-4 py-4 flex items-center gap-2.5 border-b border-border/40">

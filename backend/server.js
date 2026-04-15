@@ -22,6 +22,21 @@ app.use((req, _res, next) => {
   next();
 });
 
+// ── Admin auth ────────────────────────────────────────────────────────────────
+// GET /api/auth/mode — tells the client whether restricted mode is active
+app.get('/api/auth/mode', (_req, res) => {
+  res.json({ restricted: Boolean(process.env.ADMIN_PASSWORD) });
+});
+
+// POST /api/auth/unlock — verify admin password, never expose the password to client
+app.post('/api/auth/unlock', (req, res) => {
+  const { password } = req.body ?? {};
+  const secret = process.env.ADMIN_PASSWORD;
+  if (!secret) return res.json({ ok: true }); // no password set → always open
+  if (password === secret) return res.json({ ok: true });
+  return res.status(401).json({ ok: false, error: 'Incorrect password' });
+});
+
 // GET /api/status - overall sync status
 app.get('/api/status', async (req, res) => {
   try {
