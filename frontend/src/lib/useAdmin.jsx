@@ -3,7 +3,7 @@ import { useState, useEffect, createContext, useContext, useCallback } from 'rea
 // ─────────────────────────────────────────────────────────────
 // Context
 // ─────────────────────────────────────────────────────────────
-const AdminContext = createContext({ isAdmin: false, isRestricted: false, unlock: async () => false, lock: () => {} })
+const AdminContext = createContext({ isAdmin: false, isRestricted: null, unlock: async () => false, lock: () => {} })
 
 export function useAdmin() {
   return useContext(AdminContext)
@@ -13,7 +13,7 @@ export function useAdmin() {
 // Provider — wrap the whole app with this
 // ─────────────────────────────────────────────────────────────
 export function AdminProvider({ children }) {
-  const [isRestricted, setIsRestricted] = useState(false)  // does ADMIN_PASSWORD env var exist?
+  const [isRestricted, setIsRestricted] = useState(null)  // null=loading, false=open, true=restricted
   const [isAdmin, setIsAdmin]           = useState(false)  // has the user unlocked this session?
 
   useEffect(() => {

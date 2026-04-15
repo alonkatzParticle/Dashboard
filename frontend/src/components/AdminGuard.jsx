@@ -7,6 +7,7 @@ import { useAdmin } from '../lib/useAdmin'
 // ─────────────────────────────────────────────────────────────
 export function AdminGuard({ children }) {
   const { isAdmin, isRestricted } = useAdmin()
+  if (isRestricted === null) return null          // still loading — render nothing
   if (isRestricted && !isAdmin) {
     return <Navigate to="/weekly" replace />
   }

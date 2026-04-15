@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AdminProvider } from './lib/useAdmin'
+import { AdminProvider, useAdmin } from './lib/useAdmin'
 import { Sidebar }       from './components/Sidebar'
 import { AdminGuard, UnlockButton } from './components/AdminGuard'
 import TasksPage        from './pages/TasksPage'
@@ -9,6 +9,13 @@ import WeeklyPage       from './pages/WeeklyPage'
 import StatusReportPage from './pages/StatusReportPage'
 import StudioPage       from './pages/StudioPage'
 import SettingsPage     from './pages/SettingsPage'
+
+// Holds rendering until auth mode is resolved — prevents flash of unrestricted UI
+function AuthReady({ children }) {
+  const { isRestricted } = useAdmin()
+  if (isRestricted === null) return null
+  return children
+}
 
 export default function App() {
   // Frame.io OAuth: Adobe redirects back here with ?code=... regardless of path.
@@ -72,31 +79,33 @@ export default function App() {
   return (
     <AdminProvider>
       <BrowserRouter>
-        <div className="flex h-screen overflow-hidden bg-background text-foreground">
-          <Sidebar status={status}
-            onSync={handleSync} isSyncing={isSyncing}
-            onReset={handleReset} isResetting={isResetting}
-            followUps={followUps} />
-          <main className="flex-1 overflow-auto p-6">
-            <Routes>
-              {/* Default redirect — restricted users land on /weekly */}
-              <Route path="/"        element={<Navigate to="/weekly" replace />} />
-              <Route path="/weekly"  element={<WeeklyPage />} />
+        <AuthReady>
+          <div className="flex h-screen overflow-hidden bg-background text-foreground">
+            <Sidebar status={status}
+              onSync={handleSync} isSyncing={isSyncing}
+              onReset={handleReset} isResetting={isResetting}
+              followUps={followUps} />
+            <main className="flex-1 overflow-auto p-6">
+              <Routes>
+                {/* Default redirect — restricted users land on /weekly */}
+                <Route path="/"        element={<Navigate to="/weekly" replace />} />
+                <Route path="/weekly"  element={<WeeklyPage />} />
 
-              {/* Admin-only routes — redirect to /weekly if restricted & not unlocked */}
-              <Route path="/tasks"    element={<AdminGuard><TasksPage /></AdminGuard>} />
-              <Route path="/standup"  element={<AdminGuard><StandupPage /></AdminGuard>} />
-              <Route path="/status"   element={<AdminGuard><StatusReportPage /></AdminGuard>} />
-              <Route path="/studio"   element={<AdminGuard><StudioPage /></AdminGuard>} />
-              <Route path="/settings" element={<AdminGuard><SettingsPage /></AdminGuard>} />
+                {/* Admin-only routes — redirect to /weekly if restricted & not unlocked */}
+                <Route path="/tasks"    element={<AdminGuard><TasksPage /></AdminGuard>} />
+                <Route path="/standup"  element={<AdminGuard><StandupPage /></AdminGuard>} />
+                <Route path="/status"   element={<AdminGuard><StatusReportPage /></AdminGuard>} />
+                <Route path="/studio"   element={<AdminGuard><StudioPage /></AdminGuard>} />
+                <Route path="/settings" element={<AdminGuard><SettingsPage /></AdminGuard>} />
 
-              {/* Catch-all also goes to weekly (not tasks) so restricted users never redirect to a protected page */}
-              <Route path="*"         element={<Navigate to="/weekly" replace />} />
-            </Routes>
-          </main>
-        </div>
-        {/* Fixed lock icon — only visible when ADMIN_PASSWORD is set */}
-        <UnlockButton />
+                {/* Catch-all also goes to weekly so restricted users never hit a protected page */}
+                <Route path="*"         element={<Navigate to="/weekly" replace />} />
+              </Routes>
+            </main>
+          </div>
+          {/* Fixed lock icon — only visible when ADMIN_PASSWORD is set */}
+          <UnlockButton />
+        </AuthReady>
       </BrowserRouter>
     </AdminProvider>
   )

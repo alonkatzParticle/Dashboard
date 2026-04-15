@@ -31,8 +31,8 @@ export function Sidebar({ status, onSync, isSyncing, onReset, isResetting, follo
   }, [])
   const openCount = followUps.filter(f => f.status !== 'done' && f.status !== 'finished').length
 
-  // In restricted mode (ADMIN_PASSWORD set) and not yet unlocked — hide sidebar entirely
-  if (isRestricted && !isAdmin) return null
+  // Hide sidebar until auth mode is known (null), or when restricted and not unlocked
+  if (isRestricted !== false && !isAdmin) return null
 
   return (
     <aside style={{ width: 220, minWidth: 220 }} className="flex flex-col h-screen bg-sidebar border-r-2 border-[rgba(255,255,255,0.10)]">
