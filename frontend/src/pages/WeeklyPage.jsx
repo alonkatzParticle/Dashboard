@@ -583,6 +583,111 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
   )
 }
 
+// ── AllFilesOverlay ───────────────────────────────────────────────────────────
+// Read-only view of every member's weekly Dropbox files stacked together
+function AllFilesOverlay({ members, weekEnding, onClose }) {
+  const [allFiles, setAllFiles] = useState({})   // { memberId: { files, folder, loading } }
+  const [lightbox, setLightbox] = useState(null) // { file, memberName }
+
+  useEffect(() => {
+    const init = {}
+    members.forEach(m => { init[m.id] = { files: [], folder: '', loading: true } })
+    setAllFiles(init)
+    members.forEach(async (m) => {
+      try {
+        const r = await fetch(`/api/dropbox/weekly-files?weekEnding=${encodeURIComponent(weekEnding)}&memberName=${encodeURIComponent(m.name)}`)
+        const d = await r.json()
+        setAllFiles(prev => ({ ...prev, [m.id]: { files: d.files ?? [], folder: d.folder ?? '', loading: false } }))
+      } catch {
+        setAllFiles(prev => ({ ...prev, [m.id]: { files: [], folder: '', loading: false } }))
+      }
+    })
+  }, [members, weekEnding])
+
+  const thumbUrl = f => `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}`
+  const playUrl  = f => `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}&mode=play`
+
+  const allMedia = members.flatMap(m =>
+    (allFiles[m.id]?.files ?? []).filter(f => f.is_image || f.is_video).map(f => ({ file: f, memberName: m.name }))
+  )
+  const lbIdx = lightbox ? allMedia.findIndex(x => x.file.path_lower === lightbox.file.path_lower) : -1
+
+  return (
+    <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border/40 shrink-0">
+        <div>
+          <h2 className="text-lg font-bold text-foreground">All Selected Files</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Week ending {weekEnding}</p>
+        </div>
+        <button onClick={onClose}
+          className="w-9 h-9 flex items-center justify-center rounded-xl border border-border/40 bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-foreground text-lg transition-colors">
+          ✕
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+        {members.map(m => {
+          const { files, folder, loading } = allFiles[m.id] ?? { files: [], folder: '', loading: true }
+          return (
+            <div key={m.id} className="rounded-xl border border-border/40 bg-card overflow-hidden">
+              <div className="px-4 py-3 border-b border-border/30 flex items-center gap-3">
+                <span className="text-sm font-semibold text-foreground">{m.name}</span>
+                {folder && <span className="text-[10px] text-muted-foreground">{folder}/{m.name}</span>}
+                {!loading && <span className="text-[10px] text-muted-foreground ml-auto">{files.length} file{files.length !== 1 ? 's' : ''}</span>}
+              </div>
+              <div className="p-4">
+                {loading ? (
+                  <div className="flex gap-3">
+                    {[1,2,3,4].map(i => <div key={i} className="shrink-0 w-[160px] h-[160px] rounded-lg bg-white/5 animate-pulse" />)}
+                  </div>
+                ) : files.length === 0 ? (
+                  <p className="text-sm text-muted-foreground/60 py-1">No files added yet for this week.</p>
+                ) : (
+                  <div className="flex gap-3 overflow-x-auto pb-1">
+                    {files.map(file => (
+                      <button key={file.path_lower}
+                        onClick={() => setLightbox({ file, memberName: m.name })}
+                        className="relative shrink-0 w-[160px] h-[160px] rounded-lg overflow-hidden border border-border/30 bg-white/5 group">
+                        <img src={thumbUrl(file)} alt={file.name} className="w-full h-full object-cover" />
+                        {file.is_video && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div className="w-7 h-7 rounded-full bg-black/50 flex items-center justify-center">
+                              <span className="text-white text-[10px]">▶</span>
+                            </div>
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end pointer-events-none">
+                          <p className="w-full text-white text-[10px] px-1.5 py-1 bg-black/50 translate-y-full group-hover:translate-y-0 transition-transform truncate">{file.name}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {lightbox && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90"
+          onClick={e => { if (e.target === e.currentTarget) setLightbox(null) }}>
+          <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/70 hover:text-white text-2xl">✕</button>
+          {lbIdx > 0 && <button onClick={() => setLightbox(allMedia[lbIdx-1])} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">‹</button>}
+          {lbIdx < allMedia.length - 1 && <button onClick={() => setLightbox(allMedia[lbIdx+1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">›</button>}
+          <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3">
+            {lightbox.file.is_image
+              ? <img src={thumbUrl(lightbox.file)} alt={lightbox.file.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
+              : <video src={playUrl(lightbox.file)} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />}
+            <div className="flex flex-col items-center gap-0.5">
+              <p className="text-white/70 text-sm">{lightbox.file.name}</p>
+              <p className="text-white/40 text-xs">{lightbox.memberName}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── WeeklyColumn ──────────────────────────────────────────────────────────────
 function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh, fioConnected, addedTaskIds }) {
   return (
@@ -761,6 +866,7 @@ export default function WeeklyPage() {
   const [selectedTask, setSelectedTask] = useState(null)
   const [fioConnected, setFioConnected] = useState(null) // null=loading, false=not connected, true=connected
   const [showFioConnect, setShowFioConnect] = useState(false)
+  const [showAllFiles, setShowAllFiles] = useState(false)
 
   const [fioAutoCode, setFioAutoCode] = useState('')
   const [fioAutoError, setFioAutoError] = useState('')
@@ -888,6 +994,10 @@ export default function WeeklyPage() {
               ⬡ Frame.io
             </button>
           )}
+          <button onClick={() => setShowAllFiles(true)}
+            className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-border/30 text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors font-medium">
+            📁 View All Files
+          </button>
         </div>
         <div className="flex items-center gap-3 bg-white/5 border border-border/30 rounded-xl px-4 py-2.5">
           <svg className="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -948,6 +1058,7 @@ export default function WeeklyPage() {
         </>
       )}
       {selectedTask && <DropboxPreviewModal task={selectedTask} weekEnding={dates.nextWeekEnd} memberName={activeMember?.name ?? ''} onClose={() => setSelectedTask(null)} onItemAdded={markTaskAdded} />}
+      {showAllFiles && <AllFilesOverlay members={members} weekEnding={dates.nextWeekEnd} onClose={() => setShowAllFiles(false)} />}
     </div>
   )
 }
