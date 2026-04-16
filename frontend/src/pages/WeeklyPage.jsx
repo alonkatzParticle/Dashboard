@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { FolderOpen } from 'lucide-react'
 import { useBackgroundSync } from '../lib/utils'
+import { useAdmin } from '../lib/useAdmin'
 
 // ── DropboxPreviewModal ───────────────────────────────────────────────────────
-function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
+function DropboxPreviewModal({ task, weekEnding, memberName, onClose, onItemAdded }) {
   const hasDropbox = !!task.dropbox_link
   const hasFio = !!task.frameio_link
   const [view, setView] = useState(task._fioMode || !hasDropbox ? 'frameio' : 'dropbox')
@@ -78,6 +79,7 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
       } catch (e) { alert(`Failed to copy ${asset.name}: ${e}`) }
     }
     setFioCopied(newCopied); setFioSelected(new Set()); setFioCopying(false)
+    if (newCopied.size > fioCopied.size) onItemAdded?.(task.id)
   }
 
   const mediaFiles = files.filter(f => f.is_image || f.is_video)
@@ -108,6 +110,7 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose }) {
       } catch (e) { alert(`Failed to copy ${file.name}: ${e}`) }
     }
     setCopied(newlyCopied); setSelected(new Set()); setCopying(false)
+    if (newlyCopied.size > copied.size) onItemAdded?.(task.id)
   }
 
   const thumbUrl = f =>
@@ -581,7 +584,7 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
 }
 
 // ── WeeklyColumn ──────────────────────────────────────────────────────────────
-function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh, fioConnected }) {
+function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh, fioConnected, addedTaskIds }) {
   return (
     <div className="rounded-xl border border-border/40 bg-card overflow-hidden flex flex-col">
       <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between">
@@ -608,8 +611,13 @@ function WeeklyColumn({ title, tasks, loaded, loading, onTaskClick, onRefresh, f
               <div key={task.id} onClick={() => onTaskClick && onTaskClick(task)}
                 className={"flex items-start gap-3 p-2.5 rounded-lg bg-white/[0.03] border border-border/20 transition-colors " + (onTaskClick && (task.dropbox_link || task.frameio_link) ? 'cursor-pointer hover:bg-white/[0.08] hover:border-primary/30' : 'hover:bg-white/[0.06]')}>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <p className="text-sm text-foreground font-medium leading-snug">{task.name}</p>
+                    {addedTaskIds?.has(String(task.id)) && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 shrink-0">
+                        ✓ Added
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                     {task.status && (
@@ -753,6 +761,22 @@ export default function WeeklyPage() {
   const [selectedTask, setSelectedTask] = useState(null)
   const [fioConnected, setFioConnected] = useState(null) // null=loading, false=not connected, true=connected
   const [showFioConnect, setShowFioConnect] = useState(false)
+  const { isAdmin } = useAdmin()
+
+  // Track which task IDs have had items added to weekly — persisted per week in localStorage
+  const addedKey = `weeklyAdded:${dates?.nextWeekEnd ?? ''}`
+  const [addedTaskIds, setAddedTaskIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(`weeklyAdded:${new Date().toISOString().slice(0,10)}`) || '[]')) }
+    catch { return new Set() }
+  })
+  const markTaskAdded = useCallback((taskId) => {
+    setAddedTaskIds(prev => {
+      const next = new Set(prev)
+      next.add(String(taskId))
+      try { localStorage.setItem(addedKey, JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }, [addedKey])
 
   const [fioAutoCode, setFioAutoCode] = useState('')
   const [fioAutoError, setFioAutoError] = useState('')
@@ -904,15 +928,17 @@ export default function WeeklyPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <WeeklyColumn title="Last Week" tasks={memberData.lastWeek} loaded={memberData.loaded} loading={loading}
                   onTaskClick={task => (task.dropbox_link || task.frameio_link) && setSelectedTask(task)}
-                  onRefresh={() => { setLoading(true); fetchTasks(true) }} fioConnected={fioConnected} />
+                  onRefresh={() => { setLoading(true); fetchTasks(true) }} fioConnected={fioConnected}
+                  addedTaskIds={isAdmin ? addedTaskIds : null} />
                 <WeeklyColumn title="This Week" tasks={memberData.thisWeek} loaded={memberData.loaded} loading={loading}
-                  onRefresh={() => { setLoading(true); fetchTasks(true) }} fioConnected={fioConnected} />
+                  onRefresh={() => { setLoading(true); fetchTasks(true) }} fioConnected={fioConnected}
+                  addedTaskIds={isAdmin ? addedTaskIds : null} />
               </div>
             </div>
           )}
         </>
       )}
-      {selectedTask && <DropboxPreviewModal task={selectedTask} weekEnding={dates.nextWeekEnd} memberName={activeMember?.name ?? ''} onClose={() => setSelectedTask(null)} />}
+      {selectedTask && <DropboxPreviewModal task={selectedTask} weekEnding={dates.nextWeekEnd} memberName={activeMember?.name ?? ''} onClose={() => setSelectedTask(null)} onItemAdded={markTaskAdded} />}
     </div>
   )
 }
