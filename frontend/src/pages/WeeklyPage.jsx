@@ -751,7 +751,7 @@ function FrameioConnectModal({ onClose, onConnected, initialError, initialCode }
 // ── WeeklyPage ────────────────────────────────────────────────────────────────
 export default function WeeklyPage() {
   const [members, setMembers] = useState([])
-  const [activeTab, setActiveTab] = useState(null)
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('weeklyActiveTab') || null)
   const [tasksByMember, setTasksByMember] = useState({})
   const [loading, setLoading] = useState(false)
   const [selectedDate, setSelectedDate] = useState(() => {
@@ -838,7 +838,11 @@ export default function WeeklyPage() {
     fetch('/api/monday/settings').then(r => r.json()).then(d => {
       const mems = d.members || []
       setMembers(mems)
-      if (mems.length > 0) setActiveTab(mems[0].id)
+      if (mems.length > 0) {
+        const saved = localStorage.getItem('weeklyActiveTab')
+        const valid = saved && mems.find(m => m.id === saved)
+        setActiveTab(valid ? saved : mems[0].id)
+      }
     }).catch(console.error)
   }, [])
 
@@ -921,7 +925,7 @@ export default function WeeklyPage() {
         <>
           <div className="flex gap-1 border-b border-border/40 overflow-x-auto">
             {members.map(m => (
-              <button key={m.id} onClick={() => setActiveTab(m.id)}
+              <button key={m.id} onClick={() => { setActiveTab(m.id); localStorage.setItem('weeklyActiveTab', m.id) }}
                 className={"px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors " + (activeTab === m.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>
                 {m.name}
               </button>
