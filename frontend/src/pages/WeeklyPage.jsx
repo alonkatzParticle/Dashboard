@@ -761,22 +761,6 @@ export default function WeeklyPage() {
   const [selectedTask, setSelectedTask] = useState(null)
   const [fioConnected, setFioConnected] = useState(null) // null=loading, false=not connected, true=connected
   const [showFioConnect, setShowFioConnect] = useState(false)
-  const { isAdmin } = useAdmin()
-
-  // Track which task IDs have had items added to weekly — persisted per week in localStorage
-  const addedKey = `weeklyAdded:${dates?.nextWeekEnd ?? ''}`
-  const [addedTaskIds, setAddedTaskIds] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem(`weeklyAdded:${new Date().toISOString().slice(0,10)}`) || '[]')) }
-    catch { return new Set() }
-  })
-  const markTaskAdded = useCallback((taskId) => {
-    setAddedTaskIds(prev => {
-      const next = new Set(prev)
-      next.add(String(taskId))
-      try { localStorage.setItem(addedKey, JSON.stringify([...next])) } catch {}
-      return next
-    })
-  }, [addedKey])
 
   const [fioAutoCode, setFioAutoCode] = useState('')
   const [fioAutoError, setFioAutoError] = useState('')
@@ -808,7 +792,28 @@ export default function WeeklyPage() {
     return { weekStart: fmt(lastSun), weekEnd: fmt(lastSat), nextWeekStart: fmt(sunday), nextWeekEnd: fmt(thisSat) }
   }
 
+  const { isAdmin } = useAdmin()
   const dates = getWeekDates(selectedDate)
+
+  // Track which task IDs have had items added to weekly — persisted per week in localStorage
+  // Key is scoped to the currently-viewed week so next week starts fresh
+  const addedKey = `weeklyAdded:${dates.nextWeekEnd}`
+  const [addedTaskIds, setAddedTaskIds] = useState(() => {
+    try {
+      const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+      const now = new Date(); const sun = new Date(now); sun.setDate(now.getDate() - now.getDay())
+      const sat = new Date(sun); sat.setDate(sun.getDate() + 6)
+      return new Set(JSON.parse(localStorage.getItem(`weeklyAdded:${fmt(sat)}`) || '[]'))
+    } catch { return new Set() }
+  })
+  const markTaskAdded = useCallback((taskId) => {
+    setAddedTaskIds(prev => {
+      const next = new Set(prev)
+      next.add(String(taskId))
+      try { localStorage.setItem(addedKey, JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }, [addedKey])
 
   const fetchTasks = (force = false) => {
     const validMembers = (members || []).filter(m => m.monday_user_id)
