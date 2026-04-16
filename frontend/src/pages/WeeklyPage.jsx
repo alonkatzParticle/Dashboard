@@ -1021,7 +1021,7 @@ export default function WeeklyPage() {
           )}
         </div>
         <button onClick={() => setShowAllFiles(true)}
-          className="text-xs px-3 py-1.5 rounded-lg bg-green-500/15 border border-green-500/25 text-green-400 hover:bg-green-500/25 transition-colors font-medium">
+          className="text-sm px-4 py-2 rounded-lg bg-green-500/20 border border-green-500/40 text-green-300 hover:bg-green-500/30 hover:text-green-200 transition-colors font-semibold tracking-wide">
           📁 View All Files
         </button>
       </div>
