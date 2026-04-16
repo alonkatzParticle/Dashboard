@@ -994,10 +994,6 @@ export default function WeeklyPage() {
               ⬡ Frame.io
             </button>
           )}
-          <button onClick={() => setShowAllFiles(true)}
-            className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-border/30 text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors font-medium">
-            📁 View All Files
-          </button>
         </div>
         <div className="flex items-center gap-3 bg-white/5 border border-border/30 rounded-xl px-4 py-2.5">
           <svg className="w-4 h-4 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -1024,6 +1020,10 @@ export default function WeeklyPage() {
             </button>
           )}
         </div>
+        <button onClick={() => setShowAllFiles(true)}
+          className="text-xs px-3 py-1.5 rounded-lg bg-green-500/15 border border-green-500/25 text-green-400 hover:bg-green-500/25 transition-colors font-medium">
+          📁 View All Files
+        </button>
       </div>
       {members.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center gap-3">
