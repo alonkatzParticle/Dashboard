@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { MarkdownText } from '../lib/utils'
+import { MarkdownText, useBackgroundSync } from '../lib/utils'
 
 // ── StudioMemberCard ──────────────────────────────────────────────────────────
 function StudioMemberCard({ member, lastWeek, thisWeek, weekKey, onToggleTeam }) {
@@ -138,6 +138,19 @@ export default function StudioPage() {
       setTasksByMember(mapped)
     }).catch(console.error).finally(() => setLoading(false))
   }, [members.length, dates.weekStart])
+
+  useBackgroundSync(() => {
+    const valid = (members || []).filter(m => m.monday_user_id)
+    if (valid.length === 0) return
+    const { weekStart, weekEnd, nextWeekStart, nextWeekEnd } = dates
+    const url = "/api/monday/team-tasks?week_start=" + weekStart + "&week_end=" + weekEnd + "&next_week_start=" + nextWeekStart + "&next_week_end=" + nextWeekEnd
+    fetch(url).then(r => r.json()).then(data => {
+      const mapped = {}
+      for (const m of valid)
+        mapped[m.id] = { lastWeek: (data[m.monday_user_id] || {}).lastWeek || [], thisWeek: (data[m.monday_user_id] || {}).thisWeek || [] }
+      setTasksByMember(mapped)
+    }).catch(console.error)
+  })
 
   // Persist both summaries per week
   const keyLast = `studio_summary_last_${dates.nextWeekStart}`
