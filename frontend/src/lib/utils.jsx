@@ -56,7 +56,8 @@ export function useBackgroundSync(onSync, intervalMs = 60000) {
     let timer
     const run = async () => {
       if (document.visibilityState !== 'visible') return
-      try { await fetch('/api/monday/sync', { method: 'POST' }); onSyncRef.current() } catch {}
+      try { fetch('/api/monday/sync', { method: 'POST' }).catch(() => {}) } catch {} // fire-and-forget
+      try { onSyncRef.current() } catch {}
     }
     const onVis = () => { if (document.visibilityState === 'visible') run() }
     timer = setInterval(run, intervalMs)

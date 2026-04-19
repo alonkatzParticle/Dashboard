@@ -1202,7 +1202,8 @@ app.post('/api/monday/sync', async (req, res) => {
     const result = await incrementalSync(boardIds, token);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[sync]', err.message);
+    res.json({ updatedItems: 0 }); // degrade gracefully — never 500
   }
 });
 
