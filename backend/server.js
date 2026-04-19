@@ -1282,7 +1282,7 @@ app.get('/api/dropbox/thumbnail', async (req, res) => {
     }
 
     // Own account
-    if (mode === 'play') {
+    if (mode === 'play' || mode === 'url') {
       const linkRes = await fetch('https://api.dropboxapi.com/2/files/get_temporary_link', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -1290,6 +1290,7 @@ app.get('/api/dropbox/thumbnail', async (req, res) => {
       });
       if (!linkRes.ok) return res.status(linkRes.status).end();
       const { link } = await linkRes.json();
+      if (mode === 'url') return res.set('Cache-Control', 'public, max-age=14400').json({ url: link });
       return res.redirect(link);
     }
 

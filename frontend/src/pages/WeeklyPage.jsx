@@ -455,15 +455,32 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
   const [editMode, setEditMode] = useState(false)
   const [deleting, setDeleting] = useState(new Set())
   const [showUpload, setShowUpload] = useState(false)
+  const [prefetchedUrls, setPrefetchedUrls] = useState({}) // path_lower → full-res URL
 
   const fetchFiles = useCallback(async () => {
     setLoading(true)
     try {
       const r = await fetch(`/api/dropbox/weekly-files?weekEnding=${encodeURIComponent(weekEnding)}&memberName=${encodeURIComponent(memberName)}`)
       const d = await r.json()
-      setFiles(d.files ?? [])
+      const newFiles = d.files ?? []
+      setFiles(newFiles)
       setFolder(d.folder ?? '')
       setSharedLink(d.sharedLink ?? null)
+      // Pre-fetch temp links for all images in background (don't block render)
+      const images = newFiles.filter(f => f.is_image && f.path_lower)
+      if (images.length > 0) {
+        Promise.allSettled(images.map(async f => {
+          try {
+            const res = await fetch(`/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}&mode=url`)
+            if (!res.ok) return
+            const { url } = await res.json()
+            if (!url) return
+            // Warm browser image cache
+            const img = new Image(); img.src = url
+            setPrefetchedUrls(prev => ({ ...prev, [f.path_lower]: url }))
+          } catch {}
+        }))
+      }
     } catch { setFiles([]) }
     finally { setLoading(false) }
   }, [memberName, weekEnding])
@@ -472,6 +489,8 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
 
   const thumbUrl = (f) => `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}`
   const playUrl = (f) => `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}&mode=play`
+  // Use pre-fetched URL if available (instant), otherwise fall back to playUrl (redirect)
+  const fullUrl = (f) => prefetchedUrls[f.path_lower] || playUrl(f)
 
   const deleteFile = async (file) => {
     setDeleting(prev => new Set(prev).add(file.path_lower))
@@ -573,7 +592,7 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
           {lbIdx < media.length - 1 && <button onClick={() => setLightbox(media[lbIdx+1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-3xl p-2">›</button>}
           <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3">
             {lightbox.is_image
-              ? <img src={playUrl(lightbox)} alt={lightbox.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
+              ? <img src={fullUrl(lightbox)} alt={lightbox.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
               : <video src={playUrl(lightbox)} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />}
             <p className="text-white/70 text-sm">{lightbox.name}</p>
           </div>
