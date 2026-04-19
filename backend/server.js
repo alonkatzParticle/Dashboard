@@ -870,42 +870,46 @@ ${weekLabel}
 [Video team members listed here, NO section header for video]
 
 Person Name
-    • task description
-    • task description
-
-Person Name
-    • task description
+    • [important/high/critical tasks — all in one bullet]
+    • [X Meta ads + other low-priority — quantity only, no names]
 
 *Design Team*
 
 Person Name
-    • task description
+    • [important/high/critical tasks — all in one bullet]
 
 Rules:
 - The very first line must be exactly: ${weekLabel}
-- Then a blank line, then list VIDEO team members first with NO "Video Team" header — just their names and bullets.
+- Then a blank line, then list VIDEO team members first with NO "Video Team" header — just names and bullets.
 - After all video team members, add a blank line then *Design Team* (with asterisks for Slack bold), then design team members.
 - If there are no video team members, skip straight to *Design Team*.
 - If there are no design team members, omit *Design Team* entirely.
-- Person names are plain text — NO asterisks, NO bold formatting around names.
-- Each person: name on its own line, then 1–2 bullet lines starting with 4 spaces and • (bullet character).
+- Person names are plain text — NO asterisks, NO bold around names.
 - Blank line between each person.
-- Skip any person with no notable tasks.
+- Skip any person with no tasks at all.
 
-TONE AND LANGUAGE — this is critical:
-- Write like someone on the team jotting a quick internal Slack note, NOT like a manager writing a formal report.
-- Use fragments, not full sentences. "Sunscreen Meta videos" is fine. "Creating Ab Firming Cream videos with split-screen transitions" is fine.
-- Use the actual product names from the tasks (e.g. "Face Cream", "Anti-Gray Serum", "Sunscreen") — don't abstract them.
-- Mention the creative format or angle when relevant (e.g. "split-screen storytelling", "dermatologist angle", "morning routine integration", "mashup transitions").
-- Casual grammar is fine. "At the moment is working on Meta ads" is acceptable.
-- Do NOT write openers like "This week, [name] worked on..." — go straight into the work.
-- Do NOT use words like "completed", "delivered", "worked on", "focused on" — keep it raw and note-like.
-- META ad tasks: group all of a person's meta work into one bullet. Mention up to 3 product names (the most prominent ones across their tasks). If there are format keywords across the tasks (e.g. "mash up", "animated", "split-screen", "UGC", "dermatologist"), weave them in naturally. Example: "Several meta videos for Face Cream, Sunscreen, and Anti-Gray Serum — mash up and split-screen formats". Do not list every task individually.
-- Non-META tasks: be specific — use the actual product name, campaign name, or creative angle from the task.
+BULLET RULES — strict maximum of 2 bullets per person:
+
+BULLET 1 — Important/High/Critical tasks:
+- Only include tasks whose priority is Important, High, or Critical.
+- If there are multiple such tasks for one person, mention them ALL briefly in a SINGLE bullet — use fragments separated by semicolons or commas.
+- Example: "Face Cream TV aggressive 90s cut; Instant Eye Firming teaser; Sunscreen TV commercial"
+- If there are no Important/High/Critical tasks for this person, skip this bullet.
+
+BULLET 2 — Meta ads and everything else:
+- Group ALL Meta ad tasks AND all Normal/Medium/Low priority tasks into ONE bullet.
+- Do NOT name individual Meta ads. Just state the quantity.
+- Example: "8 Meta ads" or "Several Meta ads + B-rolls" or "12 Meta ads across various products"
+- If there are no Meta or low-priority tasks, skip this bullet.
+
+TONE:
+- Ultra-casual, note-like fragments only. No full sentences.
+- No openers like "worked on", "focused on", "completed", "delivered".
+- Use actual product names ONLY in Bullet 1 (important tasks). Bullet 2 is quantity only.
 - Use ${tense} tense.
-- Do NOT use markdown headers (##), dashes as bullets, asterisks on names, or any other formatting not shown above.
+- No markdown headers (##), dashes as bullets, or asterisks on names.
 
-Tasks:
+Tasks (priority level is shown — use it to decide which bullet each task belongs to):
 ${taskSection || 'No tasks provided.'}
 
 Output:`
