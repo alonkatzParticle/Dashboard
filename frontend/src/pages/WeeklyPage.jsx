@@ -339,7 +339,7 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose, onItemAdde
           {lbIdx < mediaFiles.length - 1 && <button onClick={() => setLightbox(mediaFiles[lbIdx + 1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">›</button>}
           <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3">
             {lightbox.is_image
-              ? <img src={thumbUrl(lightbox)} alt={lightbox.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
+              ? <img src={playUrl(lightbox)} alt={lightbox.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
               : <video src={playUrl(lightbox)} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />}
             <p className="text-white/70 text-sm">{lightbox.name}</p>
           </div>
@@ -573,7 +573,7 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
           {lbIdx < media.length - 1 && <button onClick={() => setLightbox(media[lbIdx+1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-3xl p-2">›</button>}
           <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3">
             {lightbox.is_image
-              ? <img src={thumbUrl(lightbox)} alt={lightbox.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
+              ? <img src={playUrl(lightbox)} alt={lightbox.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
               : <video src={playUrl(lightbox)} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />}
             <p className="text-white/70 text-sm">{lightbox.name}</p>
           </div>
@@ -675,7 +675,7 @@ function AllFilesOverlay({ members, weekEnding, onClose }) {
           {lbIdx < allMedia.length - 1 && <button onClick={() => setLightbox(allMedia[lbIdx+1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">›</button>}
           <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3">
             {lightbox.file.is_image
-              ? <img src={thumbUrl(lightbox.file)} alt={lightbox.file.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
+              ? <img src={playUrl(lightbox.file)} alt={lightbox.file.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
               : <video src={playUrl(lightbox.file)} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />}
             <div className="flex flex-col items-center gap-0.5">
               <p className="text-white/70 text-sm">{lightbox.file.name}</p>
