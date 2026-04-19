@@ -607,6 +607,7 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
 function AllFilesOverlay({ members, weekEnding, onClose }) {
   const [allFiles, setAllFiles] = useState({})   // { memberId: { files, folder, loading } }
   const [lightbox, setLightbox] = useState(null) // { file, memberName }
+  const [prefetchedUrls, setPrefetchedUrls] = useState({}) // path_lower → full-res URL
 
   useEffect(() => {
     const init = {}
@@ -616,7 +617,20 @@ function AllFilesOverlay({ members, weekEnding, onClose }) {
       try {
         const r = await fetch(`/api/dropbox/weekly-files?weekEnding=${encodeURIComponent(weekEnding)}&memberName=${encodeURIComponent(m.name)}`)
         const d = await r.json()
-        setAllFiles(prev => ({ ...prev, [m.id]: { files: d.files ?? [], folder: d.folder ?? '', loading: false } }))
+        const newFiles = d.files ?? []
+        setAllFiles(prev => ({ ...prev, [m.id]: { files: newFiles, folder: d.folder ?? '', loading: false } }))
+        // Prefetch temp links for all images in this member's folder
+        const images = newFiles.filter(f => f.is_image && f.path_lower)
+        Promise.allSettled(images.map(async f => {
+          try {
+            const res = await fetch(`/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}&mode=url`)
+            if (!res.ok) return
+            const { url } = await res.json()
+            if (!url) return
+            const img = new Image(); img.src = url
+            setPrefetchedUrls(prev => ({ ...prev, [f.path_lower]: url }))
+          } catch {}
+        }))
       } catch {
         setAllFiles(prev => ({ ...prev, [m.id]: { files: [], folder: '', loading: false } }))
       }
@@ -625,6 +639,7 @@ function AllFilesOverlay({ members, weekEnding, onClose }) {
 
   const thumbUrl = f => `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}`
   const playUrl  = f => `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}&mode=play`
+  const fullUrl  = f => prefetchedUrls[f.path_lower] || playUrl(f)
 
   const allMedia = members.flatMap(m =>
     (allFiles[m.id]?.files ?? []).filter(f => f.is_image || f.is_video).map(f => ({ file: f, memberName: m.name }))
@@ -694,7 +709,7 @@ function AllFilesOverlay({ members, weekEnding, onClose }) {
           {lbIdx < allMedia.length - 1 && <button onClick={() => setLightbox(allMedia[lbIdx+1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">›</button>}
           <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3">
             {lightbox.file.is_image
-              ? <img src={playUrl(lightbox.file)} alt={lightbox.file.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
+              ? <img src={fullUrl(lightbox.file)} alt={lightbox.file.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
               : <video src={playUrl(lightbox.file)} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />}
             <div className="flex flex-col items-center gap-0.5">
               <p className="text-white/70 text-sm">{lightbox.file.name}</p>
