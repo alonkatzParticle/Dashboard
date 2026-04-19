@@ -845,71 +845,91 @@ app.post('/api/ai/team-summary', async (req, res) => {
 
     const lastList = lastWeekTasks?.length ? lastWeekTasks : (lastWeekTasks == null ? tasks : [])
     const thisList = thisWeekTasks || []
+    const activeList = thisList.length > 0 ? thisList : lastList
 
-    const fmt = t => `- [${t.isVideoTeam ? 'VIDEO' : 'DESIGN'}] ${t.memberName}: ${t.task.name} (${t.task.board_name}, Priority: ${t.task.priority || 'Normal'})`
-    const lastTagged = lastList.map(fmt).join('\n')
-    const thisTagged = thisList.map(fmt).join('\n')
+    const IMPORTANT_PRIORITIES = new Set(['important', 'high', 'critical'])
+    const isImportant = t => IMPORTANT_PRIORITIES.has((t.task.priority || '').toLowerCase())
+    const isMetaOrLow = t => !isImportant(t)  // everything else: Meta ads, Normal, Medium, Low
 
-    // Build task section dynamically — only include weeks that have data
-    const hasLast = lastTagged.length > 0
-    const hasThis = thisTagged.length > 0
+    // Group by member, pre-categorize server-side — Claude just formats
+    const memberMap = {}
+    for (const t of activeList) {
+      const key = `${t.isVideoTeam ? 'VIDEO' : 'DESIGN'}::${t.memberName}`
+      if (!memberMap[key]) memberMap[key] = { memberName: t.memberName, isVideoTeam: t.isVideoTeam, important: [], other: [] }
+      if (isImportant(t)) memberMap[key].important.push(t.task.name)
+      else memberMap[key].other.push(t.task.name)
+    }
+
+    // Build the task section with pre-counted buckets — no ambiguity for Claude
+    const video = Object.values(memberMap).filter(m => m.isVideoTeam)
+    const design = Object.values(memberMap).filter(m => !m.isVideoTeam)
+
+    const fmtMember = m => {
+      const lines = [`${m.memberName}:`]
+      if (m.important.length > 0)
+        lines.push(`  IMPORTANT TASKS (${m.important.length}): ${m.important.join(' | ')}`)
+      if (m.other.length > 0)
+        lines.push(`  META/OTHER TASKS COUNT: ${m.other.length} tasks`)
+      return lines.join('\n')
+    }
+
     const taskSection = [
-      hasLast ? `Last week's completed tasks:\n${lastTagged}` : null,
-      hasThis ? `This week's tasks (in progress / upcoming):\n${thisTagged}` : null,
+      video.length > 0 ? `VIDEO TEAM:\n${video.map(fmtMember).join('\n\n')}` : null,
+      design.length > 0 ? `DESIGN TEAM:\n${design.map(fmtMember).join('\n\n')}` : null,
     ].filter(Boolean).join('\n\n')
 
+    const hasLast = lastList.length > 0
+    const hasThis = thisList.length > 0
     const weekLabel = hasThis && !hasLast ? '*This Week*' : '*Last Week*'
     const tense = hasThis && !hasLast ? 'present/future' : 'past'
 
     const prompt = `You are writing a brief weekly summary of a creative studio team for their manager. The output will be pasted directly into Slack.
 
-STRICT FORMAT — follow this exactly, no exceptions:
+STRICT FORMAT — follow this exactly:
 
 ${weekLabel}
 
-[Video team members listed here, NO section header for video]
+[Video team members — NO "Video Team" header]
 
 Person Name
-    • [important/high/critical tasks — all in one bullet]
-    • [X Meta ads + other low-priority — quantity only, no names]
+    • [important tasks in one fragment bullet]
+    • [X Meta/other tasks]
 
 *Design Team*
 
 Person Name
-    • [important/high/critical tasks — all in one bullet]
+    • [important tasks in one fragment bullet]
+    • [X Meta/other tasks]
 
-Rules:
-- The very first line must be exactly: ${weekLabel}
-- Then a blank line, then list VIDEO team members first with NO "Video Team" header — just names and bullets.
-- After all video team members, add a blank line then *Design Team* (with asterisks for Slack bold), then design team members.
-- If there are no video team members, skip straight to *Design Team*.
-- If there are no design team members, omit *Design Team* entirely.
-- Person names are plain text — NO asterisks, NO bold around names.
+RULES:
+- First line must be exactly: ${weekLabel}
+- Blank line, then VIDEO team members with NO section header.
+- After video members, blank line, then *Design Team* (asterisks = Slack bold), then design members.
+- Omit *Design Team* if no design members. Skip straight to *Design Team* if no video members.
+- Person names plain text — no asterisks, no bold.
 - Blank line between each person.
-- Skip any person with no tasks at all.
 
-BULLET RULES — strict maximum of 2 bullets per person:
+BULLET RULES — maximum 2 bullets per person, no exceptions:
 
-BULLET 1 — Important/High/Critical tasks:
-- Only include tasks whose priority is Important, High, or Critical.
-- If there are multiple such tasks for one person, mention them ALL briefly in a SINGLE bullet — use fragments separated by semicolons or commas.
+BULLET 1 — Important tasks:
+- The input gives you a list of IMPORTANT TASKS for each person. Write them ALL in a SINGLE bullet as brief fragments separated by semicolons.
 - Example: "Face Cream TV aggressive 90s cut; Instant Eye Firming teaser; Sunscreen TV commercial"
-- If there are no Important/High/Critical tasks for this person, skip this bullet.
+- Use the actual task names but shorten them naturally — keep product names, drop filler words.
+- If no important tasks listed for this person, skip Bullet 1.
 
-BULLET 2 — Meta ads and everything else:
-- Group ALL Meta ad tasks AND all Normal/Medium/Low priority tasks into ONE bullet.
-- Do NOT name individual Meta ads. Just state the quantity.
-- Example: "8 Meta ads" or "Several Meta ads + B-rolls" or "12 Meta ads across various products"
-- If there are no Meta or low-priority tasks, skip this bullet.
+BULLET 2 — Meta/other count:
+- The input gives you META/OTHER TASKS COUNT as an exact number. Use that exact number.
+- Write it as: "N Meta ads" or "N Meta ads + B-rolls" (if B-roll tasks are in the count).
+- Do NOT name any individual ads. The number is pre-counted for you — use it exactly.
+- If count is 0, skip Bullet 2.
 
 TONE:
-- Ultra-casual, note-like fragments only. No full sentences.
-- No openers like "worked on", "focused on", "completed", "delivered".
-- Use actual product names ONLY in Bullet 1 (important tasks). Bullet 2 is quantity only.
-- Use ${tense} tense.
-- No markdown headers (##), dashes as bullets, or asterisks on names.
+- Casual fragments only. No full sentences. No openers like "worked on" or "completed".
+- Product names only in Bullet 1. Bullet 2 is just the count.
+- ${tense} tense.
+- No markdown headers or dashes as bullets.
 
-Tasks (priority level is shown — use it to decide which bullet each task belongs to):
+Pre-categorized input (use the exact counts provided):
 ${taskSection || 'No tasks provided.'}
 
 Output:`
