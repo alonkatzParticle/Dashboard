@@ -1,9 +1,13 @@
-// ── Neon Postgres (async) ─────────────────────────────────────────────────────
+// ── Postgres pool ─────────────────────────────────────────────────────────────
 const { Pool } = require('pg');
+
+// SSL is required by Neon (remote) but must be disabled for local Docker postgres.
+// Set DATABASE_SSL=false in docker-compose to skip SSL for local containers.
+const useSSL = process.env.DATABASE_URL && process.env.DATABASE_SSL !== 'false';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+  ssl: useSSL ? { rejectUnauthorized: false } : false,
   max: 10,
   idleTimeoutMillis: 30000,
 });
