@@ -35,7 +35,7 @@ async function runSync(isManual = false) {
   }
 
   isSyncing = true;
-  const logId = syncLogOps.start();
+  const logId = await syncLogOps.start();
   const nowTs = Math.floor(Date.now() / 1000);
   let totalMessages = 0;
   let channelsSynced = 0;
@@ -79,13 +79,13 @@ async function runSync(isManual = false) {
     }
 
 
-    syncLogOps.complete(logId, channelsSynced, totalMessages);
+    await syncLogOps.complete(logId, channelsSynced, totalMessages);
     lastSyncTime = new Date().toISOString();
     console.log(`[Poller] Sync complete: ${totalMessages} messages across ${channelsSynced} channels`);
 
     return { success: true, totalMessages, channelsSynced };
   } catch (err) {
-    syncLogOps.fail(logId, err.message);
+    await syncLogOps.fail(logId, err.message);
     console.error('[Poller] Sync failed:', err.message);
     throw err;
   } finally {
