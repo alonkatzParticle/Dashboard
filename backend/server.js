@@ -28,6 +28,11 @@ app.get('/api/auth/mode', (_req, res) => {
   res.json({ restricted: Boolean(process.env.ADMIN_PASSWORD) });
 });
 
+// GET /api/health — Docker healthcheck + nginx upstream probe
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, ts: Date.now() });
+});
+
 // POST /api/auth/unlock — verify admin password, never expose the password to client
 app.post('/api/auth/unlock', (req, res) => {
   const { password } = req.body ?? {};

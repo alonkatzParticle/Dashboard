@@ -1,21 +1,55 @@
 services:
-  backend:
-    build: ./backend
-    container_name: slack-summary-backend
-    restart: unless-stopped
-    env_file:
-      - ./backend/.env
-    environment:
-      - DB_PATH=/data/slack_summary.db
-      - PORT=3001
-    volumes:
-      - ./backend:/data
-
   frontend:
     build: ./frontend
     container_name: slack-summary-frontend
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "3003:80"         # VPS nginx proxies this port
     depends_on:
       - backend
+
+  backend:
+    build: ./backend
+    container_name: slack-summary-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env    # All API keys (Anthropic, Monday, Dropbox, etc.)
+    environment:
+      PORT: "3001"
+      DATABASE_URL: postgresql://appuser:apppass@db:5432/slack_summary
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  db:
+    image: postgres:16-alpine
+    container_name: slack-summary-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: apppass
+      POSTGRES_DB: slack_summary
+    volumes:
+      - pgdata_slack_summary:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "appuser", "-d", "slack_summary"]
+      interval: 10s
+      retries: 5
+
+  adminer:
+    image: adminer:latest
+    container_name: slack-summary-adminer
+    restart: unless-stopped
+    ports:
+      - "5051:8080"       # 5050 is taken by brief-writer
+    depends_on:
+      - db
+
+volumes:
+  pgdata_slack_summary:   # unique name — global across Docker on this server
