@@ -423,7 +423,7 @@ function saveBoardCache(boardId, cacheEntry) {
 
 async function loadBoardCacheFromDb() {
   try {
-    const rows = mondayOps.loadAllBoardCacheEntries();
+    const rows = await mondayOps.loadAllBoardCacheEntries();
     let count = 0;
     for (const { boardId, name, items, statusColors, fetchedAt } of rows) {
       if (!boardItemCache.has(boardId)) {
@@ -438,7 +438,7 @@ async function loadBoardCacheFromDb() {
 }
 
 async function incrementalSync(boardIds, token) {
-  const lastSynced = mondayOps.getCacheMeta('last_synced') ?? new Date(Date.now() - 60_000).toISOString();
+  const lastSynced = (await mondayOps.getCacheMeta('last_synced')) ?? new Date(Date.now() - 60_000).toISOString();
   const now = new Date().toISOString();
 
   // 1. Fetch activity logs since lastSynced to find changed item IDs per board
@@ -509,6 +509,6 @@ async function incrementalSync(boardIds, token) {
     }
   }));
 
-  mondayOps.setCacheMeta('last_synced', now);
+  await mondayOps.setCacheMeta('last_synced', now);
   return { updatedItems: totalUpdated };
 }

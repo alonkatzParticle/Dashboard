@@ -1201,7 +1201,7 @@ app.post('/api/monday/sync', async (req, res) => {
   try {
     const token = process.env.MONDAY_API_TOKEN;
     if (!token) return res.json({ updatedItems: 0 });
-    const boards = mondayOps.getBoards();
+    const boards = await mondayOps.getBoards();
     const boardIds = boards.map(b => b.board_id);
     if (boardIds.length === 0) return res.json({ updatedItems: 0 });
     const result = await incrementalSync(boardIds, token);
