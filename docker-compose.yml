@@ -42,6 +42,8 @@ services:
       test: ["CMD", "pg_isready", "-U", "appuser", "-d", "slack_summary"]
       interval: 10s
       retries: 5
+    ports:
+      - "127.0.0.1:5432:5432"   # exposed on VPS localhost only — for SSH tunnel dev access
 
   adminer:
     image: adminer:latest
