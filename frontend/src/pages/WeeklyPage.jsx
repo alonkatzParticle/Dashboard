@@ -603,8 +603,51 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
 }
 
 // ── AllFilesOverlay ───────────────────────────────────────────────────────────
+// ── Token-based file→task matching ─────────────────────────────────────────
+// Tokenise a string: lowercase, strip punctuation/version numbers, keep words >2 chars
+function tokenise(str) {
+  return new Set(
+    str.toLowerCase()
+      .replace(/[|\u2192.()\[\]_\-]/g, ' ')  // pipes, arrows, dots, brackets, separators
+      .replace(/\bv\d+\b/g, '')              // version numbers like v2, v3
+      .replace(/\d{2,}/g, '')               // multi-digit numbers
+      .split(/\s+/)
+      .filter(t => t.length > 2)
+  )
+}
+
+function matchFileToTask(fileName, tasks) {
+  const fileTokens = tokenise(fileName)
+  let bestTask = null, bestScore = 0
+  for (const task of tasks) {
+    const taskTokens = [...tokenise(task.name)]
+    if (taskTokens.length === 0) continue
+    const hits = taskTokens.filter(t => fileTokens.has(t)).length
+    const score = hits / taskTokens.length
+    if (score > bestScore && score >= 0.25) { bestScore = score; bestTask = task }
+  }
+  return bestTask
+}
+
+function groupFilesByTask(files, tasks) {
+  const groups = new Map()  // taskId → { task, files }
+  const unmatched = []
+  for (const file of files) {
+    const task = matchFileToTask(file.name, tasks)
+    if (task) {
+      if (!groups.has(task.id)) groups.set(task.id, { task, files: [] })
+      groups.get(task.id).files.push(file)
+    } else {
+      unmatched.push(file)
+    }
+  }
+  const result = [...groups.values()]
+  if (unmatched.length > 0) result.push({ task: null, files: unmatched })
+  return result
+}
+
 // Read-only view of every member's weekly Dropbox files stacked together
-function AllFilesOverlay({ members, weekEnding, weekStart, onClose }) {
+function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, onClose }) {
   const [allFiles, setAllFiles] = useState({})   // { memberId: { files, folder, loading } }
   const [lightbox, setLightbox] = useState(null) // { file, memberName }
   const [prefetchedUrls, setPrefetchedUrls] = useState({}) // path_lower → full-res URL
@@ -720,6 +763,12 @@ function AllFilesOverlay({ members, weekEnding, weekStart, onClose }) {
         {/* ── Per-member file cards ── */}
         {members.map(m => {
           const { files, folder, loading } = allFiles[m.id] ?? { files: [], folder: '', loading: true }
+          // Build all tasks for this member (last + this week) for matching
+          const memberTasks = [
+            ...(tasksByMember[m.id]?.lastWeek ?? []),
+            ...(tasksByMember[m.id]?.thisWeek ?? []),
+          ]
+          const groups = groupFilesByTask(files, memberTasks)
           return (
             <div key={m.id} className="rounded-xl border border-border/40 bg-card overflow-hidden">
               <div className="px-4 py-3 border-b border-border/30 flex items-center gap-3">
@@ -735,23 +784,49 @@ function AllFilesOverlay({ members, weekEnding, weekStart, onClose }) {
                 ) : files.length === 0 ? (
                   <p className="text-sm text-muted-foreground/60 py-1">No files added yet for this week.</p>
                 ) : (
-                  <div className="flex gap-3 overflow-x-auto pb-1">
-                    {files.map(file => (
-                      <button key={file.path_lower}
-                        onClick={() => setLightbox({ file, memberName: m.name })}
-                        className="relative shrink-0 w-[160px] h-[160px] rounded-lg overflow-hidden border border-border/30 bg-white/5 group">
-                        <img src={thumbUrl(file)} alt={file.name} className="w-full h-full object-cover" />
-                        {file.is_video && (
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <div className="w-7 h-7 rounded-full bg-black/50 flex items-center justify-center">
-                              <span className="text-white text-[10px]">▶</span>
-                            </div>
+                  <div className="flex flex-col gap-4">
+                    {groups.map((group, gi) => (
+                      <div key={group.task?.id ?? 'unmatched-' + gi}>
+                        {/* Task label + status badge */}
+                        {group.task && (
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-[11px] text-muted-foreground font-medium truncate max-w-[60%]">
+                              {group.task.name}
+                            </span>
+                            {group.task.status && (
+                              <span
+                                className="text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0"
+                                style={{
+                                  backgroundColor: group.task.status_color ? group.task.status_color + '33' : 'rgba(255,255,255,0.08)',
+                                  color: group.task.status_color ?? 'rgba(255,255,255,0.5)',
+                                }}
+                              >
+                                {group.task.status}
+                              </span>
+                            )}
                           </div>
                         )}
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end pointer-events-none">
-                          <p className="w-full text-white text-[10px] px-1.5 py-1 bg-black/50 translate-y-full group-hover:translate-y-0 transition-transform truncate">{file.name}</p>
+                        {/* File thumbnails */}
+                        <div className="flex gap-3 overflow-x-auto pb-1">
+                          {group.files.map(file => (
+                            <button key={file.path_lower}
+                              onClick={() => setLightbox({ file, memberName: m.name })}
+                              className="relative shrink-0 w-[160px] h-[160px] rounded-lg overflow-hidden border border-border/30 bg-white/5 group">
+                              <img src={thumbUrl(file)} alt={file.name} className="w-full h-full object-cover" />
+                              {file.is_video && (
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                  <div className="w-7 h-7 rounded-full bg-black/50 flex items-center justify-center">
+                                    <span className="text-white text-[10px]">&#x25b6;</span>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end pointer-events-none">
+                                <p className="w-full text-white text-[10px] px-1.5 py-1 bg-black/50 translate-y-full group-hover:translate-y-0 transition-transform truncate">{file.name}</p>
+                              </div>
+                            </button>
+                          ))}
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -1151,7 +1226,7 @@ export default function WeeklyPage() {
         </>
       )}
       {selectedTask && <DropboxPreviewModal task={selectedTask} weekEnding={dates.nextWeekEnd} memberName={activeMember?.name ?? ''} onClose={() => setSelectedTask(null)} onItemAdded={markTaskAdded} />}
-      {showAllFiles && <AllFilesOverlay members={members} weekEnding={dates.nextWeekEnd} weekStart={dates.nextWeekStart} onClose={() => setShowAllFiles(false)} />}
+      {showAllFiles && <AllFilesOverlay members={members} weekEnding={dates.nextWeekEnd} weekStart={dates.nextWeekStart} tasksByMember={tasksByMember} onClose={() => setShowAllFiles(false)} />}
     </div>
   )
 }
