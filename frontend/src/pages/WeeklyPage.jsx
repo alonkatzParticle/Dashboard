@@ -604,10 +604,34 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
 
 // ── AllFilesOverlay ───────────────────────────────────────────────────────────
 // Read-only view of every member's weekly Dropbox files stacked together
-function AllFilesOverlay({ members, weekEnding, onClose }) {
+function AllFilesOverlay({ members, weekEnding, weekStart, onClose }) {
   const [allFiles, setAllFiles] = useState({})   // { memberId: { files, folder, loading } }
   const [lightbox, setLightbox] = useState(null) // { file, memberName }
   const [prefetchedUrls, setPrefetchedUrls] = useState({}) // path_lower → full-res URL
+
+  // ── Highlights state
+  const [hlView, setHlView] = useState('last') // 'last' | 'this'
+  const [hlTextLast, setHlTextLast] = useState('')
+  const [hlTextThis, setHlTextThis] = useState('')
+  const [hlSaved, setHlSaved] = useState(false)
+
+  const hlText = hlView === 'last' ? hlTextLast : hlTextThis
+  const setHlText = hlView === 'last' ? setHlTextLast : setHlTextThis
+
+  // Fetch both on open
+  useEffect(() => {
+    if (!weekStart) return
+    fetch(`/api/highlights?week_start=${weekStart}&type=last`).then(r => r.json()).then(d => setHlTextLast(d.text || '')).catch(() => {})
+    fetch(`/api/highlights?week_start=${weekStart}&type=this`).then(r => r.json()).then(d => setHlTextThis(d.text || '')).catch(() => {})
+  }, [weekStart])
+
+  const saveHighlight = (type, text) => {
+    if (!weekStart) return
+    fetch('/api/highlights', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ week_start: weekStart, type, text }),
+    }).then(() => { setHlSaved(true); setTimeout(() => setHlSaved(false), 2000) }).catch(() => {})
+  }
 
   useEffect(() => {
     const init = {}
@@ -659,6 +683,37 @@ function AllFilesOverlay({ members, weekEnding, onClose }) {
         </button>
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+
+        {/* ── Team Highlights ── */}
+        <div className="rounded-xl border border-border/40 bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between">
+            <span className="text-sm font-semibold text-foreground">Team Highlights</span>
+            <div className="flex items-center gap-2">
+              {hlSaved && <span className="text-[10px] text-emerald-400 font-medium">Saved ✓</span>}
+              <div className="flex gap-1">
+                {['last','this'].map(s => (
+                  <button key={s} onClick={() => setHlView(s)}
+                    className={`text-[11px] px-2.5 py-1 rounded-lg font-medium transition-colors ${
+                      hlView === s ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+                    }`}>
+                    {s === 'last' ? 'Last Week' : 'This Week'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="p-4">
+            <textarea
+              value={hlText}
+              onChange={e => setHlText(e.target.value)}
+              onBlur={e => saveHighlight(hlView, e.target.value)}
+              placeholder={`No highlights generated yet — open Studio to generate.`}
+              className="w-full min-h-[120px] bg-transparent text-sm text-foreground/90 placeholder:text-muted-foreground/40 resize-y leading-relaxed focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* ── Per-member file cards ── */}
         {members.map(m => {
           const { files, folder, loading } = allFiles[m.id] ?? { files: [], folder: '', loading: true }
           return (
@@ -1092,7 +1147,7 @@ export default function WeeklyPage() {
         </>
       )}
       {selectedTask && <DropboxPreviewModal task={selectedTask} weekEnding={dates.nextWeekEnd} memberName={activeMember?.name ?? ''} onClose={() => setSelectedTask(null)} onItemAdded={markTaskAdded} />}
-      {showAllFiles && <AllFilesOverlay members={members} weekEnding={dates.nextWeekEnd} onClose={() => setShowAllFiles(false)} />}
+      {showAllFiles && <AllFilesOverlay members={members} weekEnding={dates.nextWeekEnd} weekStart={dates.nextWeekStart} onClose={() => setShowAllFiles(false)} />}
     </div>
   )
 }

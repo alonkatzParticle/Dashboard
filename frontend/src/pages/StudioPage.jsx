@@ -182,6 +182,11 @@ export default function StudioPage() {
       if (!res.ok) throw new Error('Failed')
       const reader = res.body.getReader(); let text = ''
       while (true) { const { done, value } = await reader.read(); if (done) break; text += new TextDecoder().decode(value); setTeamSummary(text) }
+      // Persist to server so Weekly page can read it
+      fetch('/api/highlights', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ week_start: dates.nextWeekStart, type: highlightsView, text }),
+      }).catch(() => {})
     } catch { setTeamSummary('Error generating team summary.') }
     finally { setTeamSummaryLoading(false) }
   }

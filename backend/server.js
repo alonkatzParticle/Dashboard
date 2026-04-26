@@ -841,6 +841,26 @@ ${isLast ? 'Summary' : 'Preview'}:`;
   }
 });
 
+// ── Team Highlights persistence ──────────────────────────────────────────────
+
+// GET /api/highlights?week_start=YYYY-MM-DD&type=last|this
+app.get('/api/highlights', async (req, res) => {
+  const { week_start, type } = req.query;
+  if (!week_start || !type) return res.status(400).json({ error: 'week_start and type required' });
+  const key = `highlights:${type}:${week_start}`;
+  const text = await kvOps.get(key);
+  res.json({ text: text ?? '' });
+});
+
+// PUT /api/highlights
+app.put('/api/highlights', async (req, res) => {
+  const { week_start, type, text } = req.body;
+  if (!week_start || !type) return res.status(400).json({ error: 'week_start and type required' });
+  const key = `highlights:${type}:${week_start}`;
+  await kvOps.set(key, text ?? '');
+  res.json({ ok: true });
+});
+
 // POST /api/ai/team-summary — streaming Claude team highlights
 app.post('/api/ai/team-summary', async (req, res) => {
   try {
