@@ -922,8 +922,8 @@ RULES:
 BULLET RULES — maximum 2 bullets per person, no exceptions:
 
 BULLET 1 — Important tasks:
-- The input gives you a list of IMPORTANT TASKS for each person. Write them ALL in a SINGLE bullet as brief fragments separated by semicolons.
-- Example: "Face Cream TV aggressive 90s cut; Instant Eye Firming teaser; Sunscreen TV commercial"
+- The input gives you a list of IMPORTANT TASKS for each person. Write them ALL in a SINGLE bullet as brief fragments separated by commas.
+- Example: "Face Cream TV aggressive 90s cut, Instant Eye Firming teaser, Sunscreen TV commercial"
 - Use the actual task names but shorten them naturally — keep product names, drop filler words.
 - If no important tasks listed for this person, skip Bullet 1.
 
