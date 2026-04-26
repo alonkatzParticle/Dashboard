@@ -855,13 +855,15 @@ app.post('/api/ai/team-summary', async (req, res) => {
     const IMPORTANT_PRIORITIES = new Set(['important', 'high', 'critical'])
     const isImportant = t => IMPORTANT_PRIORITIES.has((t.task.priority || '').toLowerCase())
     const isMeta = t => /meta/i.test(t.task.name)
+    // Design team (Dan & Natalie): website tasks always shown by name regardless of priority
+    const isWebsiteForDesign = t => !t.isVideoTeam && /website/i.test(t.task.name)
 
     // Group by member, pre-categorize server-side — Claude just formats
     const memberMap = {}
     for (const t of activeList) {
       const key = `${t.isVideoTeam ? 'VIDEO' : 'DESIGN'}::${t.memberName}`
       if (!memberMap[key]) memberMap[key] = { memberName: t.memberName, isVideoTeam: t.isVideoTeam, important: [], meta: [], misc: [] }
-      if (isImportant(t)) memberMap[key].important.push(t.task.name)
+      if (isImportant(t) || isWebsiteForDesign(t)) memberMap[key].important.push(t.task.name)
       else if (isMeta(t)) memberMap[key].meta.push(t.task.name)
       else memberMap[key].misc.push(t.task.name)
     }
