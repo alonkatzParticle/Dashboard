@@ -610,13 +610,10 @@ function AllFilesOverlay({ members, weekEnding, weekStart, onClose }) {
   const [prefetchedUrls, setPrefetchedUrls] = useState({}) // path_lower → full-res URL
 
   // ── Highlights state
-  const [hlView, setHlView] = useState('last') // 'last' | 'this'
   const [hlTextLast, setHlTextLast] = useState('')
   const [hlTextThis, setHlTextThis] = useState('')
-  const [hlSaved, setHlSaved] = useState(false)
-
-  const hlText = hlView === 'last' ? hlTextLast : hlTextThis
-  const setHlText = hlView === 'last' ? setHlTextLast : setHlTextThis
+  const [hlSavedLast, setHlSavedLast] = useState(false)
+  const [hlSavedThis, setHlSavedThis] = useState(false)
 
   // Fetch both on open
   useEffect(() => {
@@ -627,10 +624,11 @@ function AllFilesOverlay({ members, weekEnding, weekStart, onClose }) {
 
   const saveHighlight = (type, text) => {
     if (!weekStart) return
+    const setSaved = type === 'last' ? setHlSavedLast : setHlSavedThis
     fetch('/api/highlights', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ week_start: weekStart, type, text }),
-    }).then(() => { setHlSaved(true); setTimeout(() => setHlSaved(false), 2000) }).catch(() => {})
+    }).then(() => { setSaved(true); setTimeout(() => setSaved(false), 2000) }).catch(() => {})
   }
 
   useEffect(() => {
@@ -688,28 +686,34 @@ function AllFilesOverlay({ members, weekEnding, weekStart, onClose }) {
         <div className="rounded-xl border border-border/40 bg-card overflow-hidden">
           <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between">
             <span className="text-sm font-semibold text-foreground">Team Highlights</span>
-            <div className="flex items-center gap-2">
-              {hlSaved && <span className="text-[10px] text-emerald-400 font-medium">Saved ✓</span>}
-              <div className="flex gap-1">
-                {['last','this'].map(s => (
-                  <button key={s} onClick={() => setHlView(s)}
-                    className={`text-[11px] px-2.5 py-1 rounded-lg font-medium transition-colors ${
-                      hlView === s ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
-                    }`}>
-                    {s === 'last' ? 'Last Week' : 'This Week'}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
-          <div className="p-4">
-            <textarea
-              value={hlText}
-              onChange={e => setHlText(e.target.value)}
-              onBlur={e => saveHighlight(hlView, e.target.value)}
-              placeholder={`No highlights generated yet — open Studio to generate.`}
-              className="w-full min-h-[120px] bg-transparent text-sm text-foreground/90 placeholder:text-muted-foreground/40 resize-y leading-relaxed focus:outline-none"
-            />
+          <div className="grid grid-cols-2 divide-x divide-border/30">
+            {/* Last Week */}
+            <div className="p-4 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">Last Week</span>
+                {hlSavedLast && <span className="text-[10px] text-emerald-400 font-medium">Saved ✓</span>}
+              </div>
+              <textarea
+                value={hlTextLast}
+                onChange={e => setHlTextLast(e.target.value)}
+                onBlur={e => saveHighlight('last', e.target.value)}
+                className="w-full min-h-[140px] bg-transparent text-sm text-foreground/90 resize-y leading-relaxed focus:outline-none"
+              />
+            </div>
+            {/* This Week */}
+            <div className="p-4 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">This Week</span>
+                {hlSavedThis && <span className="text-[10px] text-emerald-400 font-medium">Saved ✓</span>}
+              </div>
+              <textarea
+                value={hlTextThis}
+                onChange={e => setHlTextThis(e.target.value)}
+                onBlur={e => saveHighlight('this', e.target.value)}
+                className="w-full min-h-[140px] bg-transparent text-sm text-foreground/90 resize-y leading-relaxed focus:outline-none"
+              />
+            </div>
           </div>
         </div>
 
