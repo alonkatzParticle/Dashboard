@@ -58,6 +58,7 @@ async function fetchBoardMeta(boardId, token) {
   const statusCol = cols.find(c => c.type === 'status' && c.id === 'status')
     ?? cols.find(c => c.type === 'status' && c.title?.toLowerCase() === 'status');
   const dropboxCols = cols.filter(c => c.type === 'link' || c.title?.toLowerCase().includes('dropbox'));
+  const departmentCol = cols.find(c => c.type === 'status' && c.title?.toLowerCase() === 'department');
 
   const needed = new Set();
   if (timelineCol) needed.add(timelineCol.id);
@@ -65,6 +66,7 @@ async function fetchBoardMeta(boardId, token) {
   if (priorityCol) needed.add(priorityCol.id);
   if (statusCol) needed.add(statusCol.id);
   dropboxCols.forEach(c => needed.add(c.id));
+  if (departmentCol) needed.add(departmentCol.id);
 
   const statusColors = {};
   const allStatusCols = cols.filter(c => c.type === 'status');
@@ -224,6 +226,9 @@ function processTeamItem(item, boardName, statusColors = {}) {
     ?? cols.find(c => c.type === 'status' && c.id.includes('status') && !c.id.toLowerCase().includes('priority'))
     ?? cols.find(c => c.type === 'status' && !c.id.toLowerCase().includes('priority') && c.text && c.text !== '-');
 
+  const departmentCol = cols.find(c => c.type === 'status' && (c.id === 'status_1__1' || c.id === 'label') && !c.id.toLowerCase().includes('priority'))
+    ?? cols.find(c => c.type === 'status' && /department/i.test(c.id + ' ' + (c.title ?? '')));
+
   const assignee_ids = getItemAssigneeIds(item);
   if (assignee_ids.length === 0) return null;
 
@@ -256,6 +261,7 @@ function processTeamItem(item, boardName, statusColors = {}) {
     timeline_end: timelineEnd,
     priority: priorityCol?.text ?? 'Normal',
     status: statusCol?.text ?? '',
+    department: departmentCol?.text ?? null,
     status_color: statusColors[(statusCol?.text ?? '').toLowerCase()] ?? null,
     monday_url: item.url ?? null,
     dropbox_link: dropboxLink,
@@ -312,7 +318,8 @@ async function fetchTeamTasks(boardIds, validUserIds, token, weekStart, nextWeek
           tasksByUser[assignee].push({
             id: teamTask.id, name: teamTask.name, board_name: teamTask.board_name,
             assignee_id: assignee, timeline_start: teamTask.timeline_start, timeline_end: teamTask.timeline_end,
-            priority: teamTask.priority, status: teamTask.status, status_color: teamTask.status_color,
+            priority: teamTask.priority, status: teamTask.status, department: teamTask.department ?? null,
+            status_color: teamTask.status_color,
             monday_url: teamTask.monday_url, dropbox_link: teamTask.dropbox_link, frameio_link: teamTask.frameio_link,
           });
         }
