@@ -854,15 +854,16 @@ app.post('/api/ai/team-summary', async (req, res) => {
 
     const IMPORTANT_PRIORITIES = new Set(['important', 'high', 'critical'])
     const isImportant = t => IMPORTANT_PRIORITIES.has((t.task.priority || '').toLowerCase())
-    const isMetaOrLow = t => !isImportant(t)  // everything else: Meta ads, Normal, Medium, Low
+    const isMeta = t => /meta/i.test(t.task.name)
 
     // Group by member, pre-categorize server-side — Claude just formats
     const memberMap = {}
     for (const t of activeList) {
       const key = `${t.isVideoTeam ? 'VIDEO' : 'DESIGN'}::${t.memberName}`
-      if (!memberMap[key]) memberMap[key] = { memberName: t.memberName, isVideoTeam: t.isVideoTeam, important: [], other: [] }
+      if (!memberMap[key]) memberMap[key] = { memberName: t.memberName, isVideoTeam: t.isVideoTeam, important: [], meta: [], misc: [] }
       if (isImportant(t)) memberMap[key].important.push(t.task.name)
-      else memberMap[key].other.push(t.task.name)
+      else if (isMeta(t)) memberMap[key].meta.push(t.task.name)
+      else memberMap[key].misc.push(t.task.name)
     }
 
     // Build the task section with pre-counted buckets — no ambiguity for Claude
@@ -873,8 +874,10 @@ app.post('/api/ai/team-summary', async (req, res) => {
       const lines = [`${m.memberName}:`]
       if (m.important.length > 0)
         lines.push(`  IMPORTANT TASKS (${m.important.length}): ${m.important.join(' | ')}`)
-      if (m.other.length > 0)
-        lines.push(`  META/OTHER TASKS COUNT: ${m.other.length} tasks`)
+      if (m.meta.length > 0)
+        lines.push(`  META ADS COUNT: ${m.meta.length}`)
+      if (m.misc.length > 0)
+        lines.push(`  MISC TASKS COUNT: ${m.misc.length}`)
       return lines.join('\n')
     }
 
@@ -922,11 +925,11 @@ BULLET 1 — Important tasks:
 - Use the actual task names but shorten them naturally — keep product names, drop filler words.
 - If no important tasks listed for this person, skip Bullet 1.
 
-BULLET 2 — Meta/other count:
-- The input gives you META/OTHER TASKS COUNT as an exact number. Use that exact number.
-- Write it as: "N Meta ads" or "N Meta ads + B-rolls" (if B-roll tasks are in the count).
-- Do NOT name any individual ads. The number is pre-counted for you — use it exactly.
-- If count is 0, skip Bullet 2.
+BULLET 2 — Other tasks count:
+- The input gives you META ADS COUNT and/or MISC TASKS COUNT as exact pre-counted numbers. Use those exact numbers.
+- If only meta: write "N Meta ads". If only misc: write "N misc tasks". If both: write "N Meta ads + M misc tasks".
+- Do NOT name any individual tasks. The numbers are pre-counted for you — use them exactly as given.
+- If both counts are 0, skip Bullet 2.
 
 TONE:
 - Casual fragments only. No full sentences. No openers like "worked on" or "completed".
