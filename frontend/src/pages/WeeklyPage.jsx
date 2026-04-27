@@ -634,6 +634,14 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
   const [prefetchedUrls, setPrefetchedUrls] = useState({})
   const [taskPopover, setTaskPopover] = useState(null) // { name, status, status_color, x, y }
   const [hlHeight, setHlHeight] = useState(140)         // shared height for both highlight textareas
+  // Max height = enough to show the longer summary without scrolling (~20px per line + padding)
+  const hlMaxHeight = Math.max(
+    140,
+    Math.max(
+      (hlTextLast || '').split('\n').length,
+      (hlTextThis || '').split('\n').length
+    ) * 21 + 24
+  )
 
   // Dismiss popover on any click outside
   useEffect(() => {
@@ -910,20 +918,33 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
               />
             </div>
           </div>
-          {/* Single shared drag handle */}
+          {/* Single shared drag handle — grip dots = clearly draggable */}
           <div
-            className="h-2 cursor-ns-resize flex items-center justify-center border-t border-border/20 hover:bg-white/5 transition-colors"
+            className="h-5 cursor-ns-resize flex items-center justify-center gap-0.5 border-t border-border/20 bg-white/[0.03] hover:bg-white/[0.07] transition-colors select-none group"
+            title="Drag to resize"
             onMouseDown={e => {
               e.preventDefault()
               const startY = e.clientY
               const startH = hlHeight
-              const onMove = ev => setHlHeight(Math.max(60, startH + ev.clientY - startY))
+              const onMove = ev => setHlHeight(Math.min(hlMaxHeight, Math.max(60, startH + ev.clientY - startY)))
               const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
               document.addEventListener('mousemove', onMove)
               document.addEventListener('mouseup', onUp)
             }}
           >
-            <div className="w-8 h-0.5 rounded-full bg-white/20" />
+            {/* 3×2 grip dot grid */}
+            <div className="flex flex-col gap-[3px] opacity-40 group-hover:opacity-70 transition-opacity">
+              {[0,1,2].map(r => (
+                <div key={r} className="flex gap-[3px]">
+                  <div className="w-[3px] h-[3px] rounded-full bg-white" />
+                  <div className="w-[3px] h-[3px] rounded-full bg-white" />
+                  <div className="w-[3px] h-[3px] rounded-full bg-white" />
+                  <div className="w-[3px] h-[3px] rounded-full bg-white" />
+                  <div className="w-[3px] h-[3px] rounded-full bg-white" />
+                  <div className="w-[3px] h-[3px] rounded-full bg-white" />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
