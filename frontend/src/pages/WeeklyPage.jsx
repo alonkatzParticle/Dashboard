@@ -634,14 +634,6 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
   const [prefetchedUrls, setPrefetchedUrls] = useState({})
   const [taskPopover, setTaskPopover] = useState(null) // { name, status, status_color, x, y }
   const [hlHeight, setHlHeight] = useState(140)         // shared height for both highlight textareas
-  // Max height = enough to show the longer summary without scrolling (~20px per line + padding)
-  const hlMaxHeight = Math.max(
-    140,
-    Math.max(
-      (hlTextLast || '').split('\n').length,
-      (hlTextThis || '').split('\n').length
-    ) * 21 + 24
-  )
 
   // Dismiss popover on any click outside
   useEffect(() => {
@@ -656,6 +648,14 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
   const [hlTextThis, setHlTextThis] = useState('')
   const [hlSavedLast, setHlSavedLast] = useState(false)
   const [hlSavedThis, setHlSavedThis] = useState(false)
+  // Max height = enough to show the longer summary without scrolling (~20px per line + padding)
+  const hlMaxHeight = Math.max(
+    140,
+    Math.max(
+      (hlTextLast || '').split('\n').length,
+      (hlTextThis || '').split('\n').length
+    ) * 21 + 24
+  )
 
   // Fetch highlights on open
   useEffect(() => {
