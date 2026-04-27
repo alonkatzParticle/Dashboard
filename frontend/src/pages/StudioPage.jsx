@@ -111,6 +111,8 @@ export default function StudioPage() {
   const [teamSummaryThis, setTeamSummaryThis] = useState('')
   const [teamSummaryLoading, setTeamSummaryLoading] = useState(false)
   const [teamSummaryCopied, setTeamSummaryCopied] = useState(false)
+  const [emailCountsLast, setEmailCountsLast] = useState(null)  // { natalie, dan } | null
+  const [emailCountsThis, setEmailCountsThis] = useState(null)
 
   function getWeekDates(sunday) {
     const lastSun = new Date(sunday); lastSun.setDate(sunday.getDate() - 7)
@@ -139,6 +141,17 @@ export default function StudioPage() {
     }).catch(console.error).finally(() => setLoading(false))
   }, [members.length, dates.weekStart])
 
+  // Fetch email counts for both weeks whenever dates change
+  useEffect(() => {
+    const { weekStart, weekEnd, nextWeekStart, nextWeekEnd } = dates
+    setEmailCountsLast(null)
+    setEmailCountsThis(null)
+    fetch(`/api/monday/email-counts?week_start=${weekStart}&week_end=${weekEnd}`)
+      .then(r => r.json()).then(d => setEmailCountsLast(d)).catch(() => {})
+    fetch(`/api/monday/email-counts?week_start=${nextWeekStart}&week_end=${nextWeekEnd}`)
+      .then(r => r.json()).then(d => setEmailCountsThis(d)).catch(() => {})
+  }, [dates.weekStart])
+
   useBackgroundSync(() => {
     const valid = (members || []).filter(m => m.monday_user_id)
     if (valid.length === 0) return
@@ -152,15 +165,13 @@ export default function StudioPage() {
     }).catch(console.error)
   })
 
-  // Persist both summaries per week
-  const keyLast = `studio_summary_last_${dates.nextWeekStart}`
-  const keyThis = `studio_summary_this_${dates.nextWeekStart}`
+  // Load highlights from server (shared with Weekly page)
   useEffect(() => {
-    setTeamSummaryLast(localStorage.getItem(keyLast) || '')
-    setTeamSummaryThis(localStorage.getItem(keyThis) || '')
-  }, [keyLast, keyThis])
-  useEffect(() => { if (teamSummaryLast && !teamSummaryLoading) localStorage.setItem(keyLast, teamSummaryLast) }, [teamSummaryLast, teamSummaryLoading, keyLast])
-  useEffect(() => { if (teamSummaryThis && !teamSummaryLoading) localStorage.setItem(keyThis, teamSummaryThis) }, [teamSummaryThis, teamSummaryLoading, keyThis])
+    if (!dates.nextWeekStart) return
+    setTeamSummaryLast(''); setTeamSummaryThis('')
+    fetch(`/api/highlights?week_start=${dates.nextWeekStart}&type=last`).then(r => r.json()).then(d => { if (d.text) setTeamSummaryLast(d.text) }).catch(() => {})
+    fetch(`/api/highlights?week_start=${dates.nextWeekStart}&type=this`).then(r => r.json()).then(d => { if (d.text) setTeamSummaryThis(d.text) }).catch(() => {})
+  }, [dates.nextWeekStart])
 
   const teamSummary = highlightsView === 'last' ? teamSummaryLast : teamSummaryThis
   const setTeamSummary = highlightsView === 'last' ? setTeamSummaryLast : setTeamSummaryThis
@@ -174,7 +185,10 @@ export default function StudioPage() {
         const data = tasksByMember[m.id] || {}
         return (data[weekType] || []).map(task => ({ memberName: m.name, isVideoTeam: !!m.is_video_team, task }))
       })
-      const body = highlightsView === 'last' ? { lastWeekTasks: tasks, thisWeekTasks: [] } : { lastWeekTasks: [], thisWeekTasks: tasks }
+      const ec = highlightsView === 'last' ? emailCountsLast : emailCountsThis
+      const body = highlightsView === 'last'
+        ? { lastWeekTasks: tasks, thisWeekTasks: [], emailCounts: ec || {} }
+        : { lastWeekTasks: [], thisWeekTasks: tasks, emailCounts: ec || {} }
       const res = await fetch('/api/ai/team-summary', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -291,6 +305,7 @@ export default function StudioPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {validMembers.map(member => {
             const data = tasksByMember[member.id] || { lastWeek: [], thisWeek: [] }
+            const name = member.name.toLowerCase()
             return <StudioMemberCard key={member.id} member={member} lastWeek={data.lastWeek} thisWeek={data.thisWeek} weekKey={dates.weekStart} onToggleTeam={async (m) => {
               const updated = { ...m, is_video_team: m.is_video_team ? 0 : 1 }
               await fetch('/api/monday/settings/members', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) })

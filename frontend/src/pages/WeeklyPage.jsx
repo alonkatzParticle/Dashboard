@@ -71,7 +71,11 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose, onItemAdde
       try {
         const res = await fetch('/api/frameio/to-dropbox', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileId: asset.file_id, fileName: asset.name, weekEnding, memberName }),
+          body: JSON.stringify({
+            fileId: asset.file_id, fileName: asset.name, weekEnding, memberName,
+            taskId: task.id, taskName: task.name,
+            taskStatus: task.status, statusColor: task.status_color,
+          }),
         })
         const data = await res.json()
         if (!data.success) throw new Error(data.error)
@@ -102,6 +106,8 @@ function DropboxPreviewModal({ task, weekEnding, memberName, onClose, onItemAdde
             filePath: file.path_lower ?? null,
             sharedUrl: file.path_lower ? null : task.dropbox_link,
             fileName: file.name, weekEnding, memberName,
+            taskId: task.id, taskName: task.name,
+            taskStatus: task.status, statusColor: task.status_color,
           }),
         })
         const data = await res.json()
@@ -602,52 +608,17 @@ function WeeklyFilesPreview({ memberName, weekEnding }) {
   )
 }
 
-// ── AllFilesOverlay ───────────────────────────────────────────────────────────
-// ── Token-based file→task matching ─────────────────────────────────────────
-// Tokenise a string: lowercase, strip punctuation/version numbers, keep words >2 chars
-function tokenise(str) {
-  return new Set(
-    str.toLowerCase()
-      .replace(/[|\u2192.()\[\]_\-]/g, ' ')  // pipes, arrows, dots, brackets, separators
-      .replace(/\bv\d+\b/g, '')              // version numbers like v2, v3
-      .replace(/\d{2,}/g, '')               // multi-digit numbers
-      .split(/\s+/)
-      .filter(t => t.length > 2)
-  )
-}
-
-function matchFileToTask(fileName, tasks) {
-  const fileTokens = tokenise(fileName)
-  let bestTask = null, bestScore = 0
-  for (const task of tasks) {
-    const taskTokens = [...tokenise(task.name)]
-    if (taskTokens.length === 0) continue
-    const hits = taskTokens.filter(t => fileTokens.has(t)).length
-    const score = hits / taskTokens.length
-    if (score > bestScore && score >= 0.25) { bestScore = score; bestTask = task }
-  }
-  return bestTask
-}
-
-function buildCombinedGroups(files, tasks, fioAssetsByTask) {
-  const groups = new Map()  // taskId → { task, files: [{source,..}] }
+// ── Exact filename→task mapping (built from each task's dropbox folder listing) ──
+function buildGroups(files, fileTaskMap) {
+  const groups = new Map()  // taskId → { task, files }
   const unmatched = []
-  // Dropbox files — token-match to tasks
   for (const file of files) {
-    const task = matchFileToTask(file.name, tasks)
+    const task = fileTaskMap?.get(file.name) ?? null
     if (task) {
       if (!groups.has(task.id)) groups.set(task.id, { task, files: [] })
-      groups.get(task.id).files.push({ ...file, source: 'dropbox' })
+      groups.get(task.id).files.push(file)
     } else {
-      unmatched.push({ ...file, source: 'dropbox' })
-    }
-  }
-  // Frame.io assets — already task-associated
-  for (const task of tasks) {
-    const assets = fioAssetsByTask[task.id] ?? []
-    for (const asset of assets) {
-      if (!groups.has(task.id)) groups.set(task.id, { task, files: [] })
-      groups.get(task.id).files.push({ ...asset, source: 'frameio', is_video: true, is_image: false })
+      unmatched.push(file)
     }
   }
   const result = [...groups.values()]
@@ -657,10 +628,20 @@ function buildCombinedGroups(files, tasks, fioAssetsByTask) {
 
 // Read-only view of every member's weekly Dropbox files stacked together
 function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, fioConnected, onClose }) {
-  const [allFiles, setAllFiles] = useState({})   // { memberId: { files, folder, loading } }
-  const [fioAssetsByTask, setFioAssetsByTask] = useState({})  // { taskId: Asset[] }
-  const [lightbox, setLightbox] = useState(null) // { file, memberName }
-  const [prefetchedUrls, setPrefetchedUrls] = useState({}) // path_lower → full-res URL
+  const [allFiles, setAllFiles] = useState({})       // { memberId: { files, folder, loading } }
+  const [fileTaskMap, setFileTaskMap] = useState({}) // { memberId: Map<filename, task> }
+  const [lightbox, setLightbox] = useState(null)
+  const [prefetchedUrls, setPrefetchedUrls] = useState({})
+  const [taskPopover, setTaskPopover] = useState(null) // { name, status, status_color, x, y }
+  const [hlHeight, setHlHeight] = useState(140)         // shared height for both highlight textareas
+
+  // Dismiss popover on any click outside
+  useEffect(() => {
+    if (!taskPopover) return
+    const close = () => setTaskPopover(null)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [taskPopover])
 
   // ── Highlights state
   const [hlTextLast, setHlTextLast] = useState('')
@@ -712,38 +693,170 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
     })
   }, [members, weekEnding])
 
-  // Fetch Frame.io assets for all tasks with frameio_link
-  useEffect(() => {
-    if (!fioConnected) return
-    const seen = new Set()
-    members.forEach(m => {
-      const tasks = [
-        ...(tasksByMember[m.id]?.lastWeek ?? []),
-        ...(tasksByMember[m.id]?.thisWeek ?? []),
-      ]
-      tasks.filter(t => t.frameio_link && !seen.has(t.id)).forEach(t => {
-        seen.add(t.id)
-        fetch(`/api/frameio/assets?reviewUrl=${encodeURIComponent(t.frameio_link)}`)
-          .then(r => r.json())
-          .then(d => { if (d.assets?.length) setFioAssetsByTask(prev => ({ ...prev, [t.id]: d.assets })) })
-          .catch(() => {})
-      })
-    })
-  }, [members, tasksByMember, fioConnected])
+  // Keep fresh refs so callbacks always see latest values without being reactive deps
+  const tasksByMemberRef = useRef(tasksByMember)
+  tasksByMemberRef.current = tasksByMember
+  const fioConnectedRef = useRef(fioConnected)
+  fioConnectedRef.current = fioConnected
+  const membersRef = useRef(members)
+  membersRef.current = members
 
-  // Thumbnail helpers (source-aware)
-  const fileThumb = f => f.source === 'frameio'
-    ? `/api/frameio/thumbnail?assetId=${f.id}`
-    : `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}`
-  const filePlay = f => f.source === 'frameio'
-    ? `/api/frameio/thumbnail?assetId=${f.id}`
-    : `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}&mode=play`
-  const fileFullUrl = f => f.source === 'frameio'
-    ? `/api/frameio/thumbnail?assetId=${f.id}`
-    : (prefetchedUrls[f.path_lower] || filePlay(f))
+  // Guards: prevent expensive chain from re-running while already built for this week
+  const mapBuiltForWeek = useRef(null)
+
+  // Build filename→task map: DB primary, folder-listing fallback, FIO enrichment
+  // Runs ONCE per weekEnding — background syncs that update tasksByMember are ignored
+  useEffect(() => {
+    if (members.length === 0) return                        // not loaded yet
+    if (mapBuiltForWeek.current === weekEnding) return      // already done for this week
+
+    const currentMembers = membersRef.current
+    const currentTasks   = tasksByMemberRef.current
+
+    // Wait until at least one member's tasks have loaded
+    const hasTasks = currentMembers.some(m =>
+      currentTasks[m.id]?.lastWeek?.length || currentTasks[m.id]?.thisWeek?.length
+    )
+    if (!hasTasks) return
+
+    mapBuiltForWeek.current = weekEnding   // mark as building — prevents re-entry
+
+    const sanitizeName = name => name.replace(/[^\w.\-_ ()]/g, '_')
+    const dbKey  = `filetaskmap:${weekEnding}`
+    const fioKey = `filetaskmap_fio:${weekEnding}`
+
+    // ── FIO enrichment (best-effort, never overwrites existing entries) ────────
+    const enrichWithFio = async (maps) => {
+      if (!fioConnectedRef.current) return
+      // Check FIO sessionStorage cache first
+      try {
+        const cached = sessionStorage.getItem(fioKey)
+        if (cached) {
+          const parsed = JSON.parse(cached)
+          currentMembers.forEach(m => {
+            Object.entries(parsed[m.id] || {}).forEach(([name, task]) => {
+              if (!maps[m.id]?.has(name)) maps[m.id]?.set(name, task)
+            })
+          })
+          setFileTaskMap(prev => ({ ...prev }))
+          return
+        }
+      } catch {}
+
+      const fetches = currentMembers.flatMap(m => {
+        const memberTasks = [
+          ...(currentTasks[m.id]?.lastWeek ?? []),
+          ...(currentTasks[m.id]?.thisWeek ?? []),
+        ]
+        return memberTasks.filter(t => t.frameio_link).map(async task => {
+          try {
+            const r = await fetch('/api/frameio/assets?reviewUrl=' + encodeURIComponent(task.frameio_link))
+            const d = await r.json()
+            ;(d.assets || []).forEach(a => {
+              const sanitized = sanitizeName(a.name)
+              if (!maps[m.id]?.has(sanitized)) maps[m.id]?.set(sanitized, task)
+            })
+          } catch {}
+        })
+      })
+      await Promise.allSettled(fetches)
+      // Save FIO results to sessionStorage
+      try {
+        const toCache = {}
+        currentMembers.forEach(m => {
+          toCache[m.id] = Object.fromEntries(
+            [...maps[m.id].entries()].map(([name, task]) => [name, {
+              id: task.id ?? task.taskId, name: task.name ?? task.taskName,
+              status: task.status ?? task.taskStatus, status_color: task.status_color ?? task.statusColor,
+            }])
+          )
+        })
+        sessionStorage.setItem(fioKey, JSON.stringify(toCache))
+      } catch {}
+      setFileTaskMap(prev => ({ ...prev }))
+    }
+
+    // ── Fallback: folder-listing for files not yet in DB (old files) ──────────
+    const fallbackFolderListing = (maps) => {
+      try {
+        const cached = sessionStorage.getItem(dbKey)
+        if (cached) {
+          const parsed = JSON.parse(cached)
+          currentMembers.forEach(m => {
+            Object.entries(parsed[m.id] || {}).forEach(([name, task]) => {
+              if (!maps[m.id].has(name)) maps[m.id].set(name, task)
+            })
+          })
+          setFileTaskMap(prev => ({ ...prev }))
+          enrichWithFio(maps)
+          return
+        }
+      } catch {}
+
+      const allFetches = currentMembers.flatMap(m => {
+        const memberTasks = [
+          ...(currentTasks[m.id]?.lastWeek ?? []),
+          ...(currentTasks[m.id]?.thisWeek ?? []),
+        ]
+        return memberTasks.filter(t => t.dropbox_link).map(async task => {
+          try {
+            const r = await fetch('/api/dropbox/folder?url=' + encodeURIComponent(task.dropbox_link))
+            const d = await r.json()
+            ;(d.files || []).forEach(f => {
+              if (!maps[m.id].has(f.name)) maps[m.id].set(f.name, task)
+            })
+          } catch {}
+        })
+      })
+      Promise.allSettled(allFetches).then(() => {
+        setFileTaskMap(prev => ({ ...prev }))
+        try {
+          const toCache = {}
+          currentMembers.forEach(m => {
+            toCache[m.id] = Object.fromEntries(
+              [...maps[m.id].entries()].map(([name, task]) => [name, {
+                id: task.id, name: task.name,
+                status: task.status, status_color: task.status_color,
+              }])
+            )
+          })
+          sessionStorage.setItem(dbKey, JSON.stringify(toCache))
+        } catch {}
+        enrichWithFio(maps)
+      })
+    }
+
+    // ── Primary: DB lookup (single fast query) ────────────────────────────────
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/weekly-file-tasks?weekEnding=${encodeURIComponent(weekEnding)}`)
+        const d = await r.json()
+        const maps = {}
+        currentMembers.forEach(m => { maps[m.id] = new Map() })
+        currentMembers.forEach(m => {
+          Object.entries(d[m.name] || {}).forEach(([fileName, task]) => {
+            maps[m.id].set(fileName, {
+              id: task.taskId, name: task.taskName,
+              status: task.taskStatus, status_color: task.statusColor,
+            })
+          })
+        })
+        setFileTaskMap(maps)
+        fallbackFolderListing(maps)   // enrich with older files
+      } catch {}
+    })()
+  // deps: only members.length (first load) and weekEnding (week change)
+  // tasksByMember and fioConnected are accessed via refs — not reactive
+  }, [members.length, weekEnding, tasksByMember])  // tasksByMember here only to trigger once tasks first arrive
+
+
+  // Thumbnail and play URL helpers
+  const thumbUrl = f => `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}`
+  const playUrl  = f => `/api/dropbox/thumbnail?path=${encodeURIComponent(f.path_lower)}&mode=play`
+  const fullUrl  = f => prefetchedUrls[f.path_lower] || playUrl(f)
 
   const allMedia = members.flatMap(m =>
-    (allFiles[m.id]?.files ?? []).filter(f => f.is_image || f.is_video).map(f => ({ file: { ...f, source: 'dropbox' }, memberName: m.name }))
+    (allFiles[m.id]?.files ?? []).filter(f => f.is_image || f.is_video).map(f => ({ file: f, memberName: m.name }))
   )
   const lbIdx = lightbox ? allMedia.findIndex(x => x.file.path_lower === lightbox.file.path_lower) : -1
 
@@ -778,7 +891,8 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
                 value={hlTextLast}
                 onChange={e => setHlTextLast(e.target.value)}
                 onBlur={e => saveHighlight('last', e.target.value)}
-                className="w-full min-h-[140px] bg-transparent text-sm text-foreground/90 resize-y leading-relaxed focus:outline-none"
+                style={{ height: hlHeight }}
+                className="w-full bg-transparent text-sm text-foreground/90 resize-none leading-relaxed focus:outline-none"
               />
             </div>
             {/* This Week */}
@@ -791,9 +905,25 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
                 value={hlTextThis}
                 onChange={e => setHlTextThis(e.target.value)}
                 onBlur={e => saveHighlight('this', e.target.value)}
-                className="w-full min-h-[140px] bg-transparent text-sm text-foreground/90 resize-y leading-relaxed focus:outline-none"
+                style={{ height: hlHeight }}
+                className="w-full bg-transparent text-sm text-foreground/90 resize-none leading-relaxed focus:outline-none"
               />
             </div>
+          </div>
+          {/* Single shared drag handle */}
+          <div
+            className="h-2 cursor-ns-resize flex items-center justify-center border-t border-border/20 hover:bg-white/5 transition-colors"
+            onMouseDown={e => {
+              e.preventDefault()
+              const startY = e.clientY
+              const startH = hlHeight
+              const onMove = ev => setHlHeight(Math.max(60, startH + ev.clientY - startY))
+              const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp) }
+              document.addEventListener('mousemove', onMove)
+              document.addEventListener('mouseup', onUp)
+            }}
+          >
+            <div className="w-8 h-0.5 rounded-full bg-white/20" />
           </div>
         </div>
 
@@ -804,30 +934,40 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
             ...(tasksByMember[m.id]?.lastWeek ?? []),
             ...(tasksByMember[m.id]?.thisWeek ?? []),
           ]
-          const groups = buildCombinedGroups(files, memberTasks, fioAssetsByTask)
-          const totalFiles = files.length + memberTasks.reduce((s, t) => s + (fioAssetsByTask[t.id]?.length ?? 0), 0)
+          const groups = buildGroups(files, fileTaskMap[m.id])
+          const totalCount = files.length
           return (
             <div key={m.id} className="rounded-xl border border-border/40 bg-card overflow-hidden">
               <div className="px-4 py-3 border-b border-border/30 flex items-center gap-3">
                 <span className="text-sm font-semibold text-foreground">{m.name}</span>
                 {folder && <span className="text-[10px] text-muted-foreground">{folder}/{m.name}</span>}
-                {!loading && <span className="text-[10px] text-muted-foreground ml-auto">{totalFiles} file{totalFiles !== 1 ? 's' : ''}</span>}
+                {!loading && <span className="text-[10px] text-muted-foreground ml-auto">{totalCount} file{totalCount !== 1 ? 's' : ''}</span>}
               </div>
               <div className="p-4">
                 {loading ? (
                   <div className="flex gap-3">
                     {[1,2,3,4].map(i => <div key={i} className="shrink-0 w-[160px] h-[160px] rounded-lg bg-white/5 animate-pulse" />)}
                   </div>
-                ) : totalFiles === 0 ? (
+                ) : totalCount === 0 ? (
                   <p className="text-sm text-muted-foreground/60 py-1">No files added yet for this week.</p>
                 ) : (
                   <div className="flex gap-6 overflow-x-auto pb-2">
                     {groups.map((group, gi) => (
                       <div key={group.task?.id ?? 'unmatched-' + gi} className="flex flex-col gap-2 shrink-0">
-                        {/* Task label + status badge — max-w capped */}
+                        {/* Task label + status badge — click to expand */}
                         {group.task && (
                           <div className="flex items-center gap-1.5 max-w-[220px]">
-                            <span className="text-[11px] text-muted-foreground font-medium truncate">
+                            <span
+                              className="text-[11px] text-muted-foreground font-medium truncate cursor-pointer hover:text-white transition-colors"
+                              onClick={e => {
+                                e.stopPropagation()
+                                const rect = e.currentTarget.getBoundingClientRect()
+                                setTaskPopover(prev =>
+                                  prev?.name === group.task.name ? null
+                                  : { name: group.task.name, status: group.task.status, status_color: group.task.status_color, x: rect.left, y: rect.bottom + 6 }
+                                )
+                              }}
+                            >
                               {group.task.name}
                             </span>
                             {group.task.status && (
@@ -846,10 +986,10 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
                         {/* Thumbnails in a row */}
                         <div className="flex gap-3">
                           {group.files.map((file, fi) => (
-                            <button key={file.source === 'frameio' ? file.id : (file.path_lower ?? fi)}
+                            <button key={file.path_lower ?? fi}
                               onClick={() => setLightbox({ file, memberName: m.name })}
                               className="relative shrink-0 w-[160px] h-[160px] rounded-lg overflow-hidden border border-border/30 bg-white/5 group">
-                              <img src={fileThumb(file)} alt={file.name} className="w-full h-full object-cover" />
+                              <img src={thumbUrl(file)} alt={file.name} className="w-full h-full object-cover" />
                               {file.is_video && (
                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                   <div className="w-7 h-7 rounded-full bg-black/50 flex items-center justify-center">
@@ -857,9 +997,7 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
                                   </div>
                                 </div>
                               )}
-                              {file.source === 'frameio' && (
-                                <div className="absolute top-1.5 right-1.5 bg-black/60 text-white text-[8px] px-1 py-0.5 rounded font-medium pointer-events-none">FIO</div>
-                              )}
+
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-end pointer-events-none">
                                 <p className="w-full text-white text-[10px] px-1.5 py-1 bg-black/50 translate-y-full group-hover:translate-y-0 transition-transform truncate">{file.name}</p>
                               </div>
@@ -883,13 +1021,35 @@ function AllFilesOverlay({ members, weekEnding, weekStart, tasksByMember = {}, f
           {lbIdx < allMedia.length - 1 && <button onClick={() => setLightbox(allMedia[lbIdx+1])} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white text-4xl p-2">&#x203a;</button>}
           <div className="max-w-[90vw] max-h-[90vh] flex flex-col items-center gap-3">
             {lightbox.file.is_image
-              ? <img src={fileFullUrl(lightbox.file)} alt={lightbox.file.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
-              : <video src={filePlay(lightbox.file)} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />}
+              ? <img src={fullUrl(lightbox.file)} alt={lightbox.file.name} className="max-w-full max-h-[80vh] object-contain rounded-lg" />
+              : <video src={playUrl(lightbox.file)} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg" />}
             <div className="flex flex-col items-center gap-0.5">
               <p className="text-white/70 text-sm">{lightbox.file.name}</p>
               <p className="text-white/40 text-xs">{lightbox.memberName}</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Task name full-text popover — click tag to open, click anywhere to close */}
+      {taskPopover && (
+        <div
+          className="fixed z-[300] bg-[#1a1a2e] border border-white/20 rounded-xl px-4 py-3 shadow-2xl max-w-sm"
+          style={{ left: Math.min(taskPopover.x, window.innerWidth - 320), top: taskPopover.y }}
+          onClick={e => e.stopPropagation()}
+        >
+          <p className="text-sm text-white font-medium leading-snug">{taskPopover.name}</p>
+          {taskPopover.status && (
+            <span
+              className="mt-1.5 inline-block text-[11px] px-2 py-0.5 rounded-full font-medium"
+              style={{
+                backgroundColor: taskPopover.status_color ? taskPopover.status_color + '33' : 'rgba(255,255,255,0.08)',
+                color: taskPopover.status_color ?? 'rgba(255,255,255,0.5)',
+              }}
+            >
+              {taskPopover.status}
+            </span>
+          )}
         </div>
       )}
     </div>

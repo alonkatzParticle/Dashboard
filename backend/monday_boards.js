@@ -411,7 +411,90 @@ async function fetchDailyActivity(boardIds, token, force = false) {
   return { completedToday: completedTasks, inProgress: inProgressTasks };
 }
 
-module.exports = { clearBoardCache, loadBoardCacheFromDb, incrementalSync, fetchTasksForUser, fetchAllBoardTasks, fetchTeamTasks, fetchDailyActivity, COMPLETED_STATUSES };
+// ── Email counts from the marketing board (Studio page only) ──────────────────
+const EMAIL_BOARD_ID = '9993980489';
+
+async function fetchEmailCounts(token, weekStart, weekEnd) {
+  // Fetch all board columns to find "Designer" and "Timeline Creative" by title
+  const metaData = await mondayQuery(
+    `query { boards(ids: [${EMAIL_BOARD_ID}]) { columns { id type title } } }`,
+    token
+  );
+  const cols = metaData?.boards?.[0]?.columns ?? [];
+
+  const designerCol = cols.find(c =>
+    (c.type === 'multiple-person' || c.type === 'people') &&
+    /designer/i.test(c.title)
+  ) ?? cols.find(c => c.type === 'multiple-person' || c.type === 'people');
+
+  const timelineCreativeCol = cols.find(c =>
+    c.type === 'timeline' && /creative/i.test(c.title)
+  ) ?? cols.find(c => c.type === 'timeline');
+
+  if (!designerCol || !timelineCreativeCol) {
+    console.warn('[emailCounts] Could not find Designer or Timeline Creative column');
+    return { natalie: 0, dan: 0 };
+  }
+
+  const colIds = [designerCol.id, timelineCreativeCol.id];
+  const colIdsArg = `ids: [${colIds.map(id => `"${id}"`).join(', ')}]`;
+
+  // Fetch all items from the email board
+  const firstData = await mondayQuery(`
+    query {
+      boards(ids: [${EMAIL_BOARD_ID}]) {
+        items_page(limit: 500) {
+          cursor
+          items {
+            id name
+            column_values(${colIdsArg}) { id type text value }
+          }
+        }
+      }
+    }
+  `, token);
+
+  const page = firstData?.boards?.[0]?.items_page;
+  let cursor = page?.cursor ?? null;
+  const items = [...(page?.items ?? [])];
+  while (cursor) {
+    const next = await mondayQuery(
+      `query { next_items_page(limit: 500, cursor: "${cursor}") { cursor items { id name column_values(${colIdsArg}) { id type text value } } } }`,
+      token
+    );
+    cursor = next?.next_items_page?.cursor ?? null;
+    items.push(...(next?.next_items_page?.items ?? []));
+  }
+
+  const counts = { natalie: 0, dan: 0 };
+  for (const item of items) {
+    const dcol = item.column_values?.find(c => c.id === designerCol.id);
+    const tcol = item.column_values?.find(c => c.id === timelineCreativeCol.id);
+
+    // Check if designer is Natalie or Dan (using text field which has display names)
+    const designerText = (dcol?.text ?? '').toLowerCase();
+    const isNatalie = designerText.includes('natalie');
+    const isDan = designerText.includes('dan');
+    if (!isNatalie && !isDan) continue;
+
+    // Parse timeline creative end date
+    let timelineEnd = null;
+    if (tcol?.value) {
+      try { timelineEnd = JSON.parse(tcol.value)?.to ?? null; } catch {}
+    }
+    if (!timelineEnd) continue;
+
+    // Check if end date falls within the requested week
+    if (timelineEnd >= weekStart && timelineEnd <= weekEnd) {
+      if (isNatalie) counts.natalie++;
+      if (isDan) counts.dan++;
+    }
+  }
+
+  return counts;
+}
+
+module.exports = { clearBoardCache, loadBoardCacheFromDb, incrementalSync, fetchTasksForUser, fetchAllBoardTasks, fetchTeamTasks, fetchDailyActivity, fetchEmailCounts, COMPLETED_STATUSES };
 
 // ── Board cache DB persistence ───────────────────────────────────────────────
 function saveBoardCache(boardId, cacheEntry) {

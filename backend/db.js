@@ -164,6 +164,19 @@ async function initDb() {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS weekly_file_tasks (
+      id           SERIAL PRIMARY KEY,
+      week_ending  TEXT NOT NULL,
+      member_name  TEXT NOT NULL,
+      file_name    TEXT NOT NULL,
+      task_id      TEXT NOT NULL,
+      task_name    TEXT NOT NULL,
+      task_status  TEXT,
+      status_color TEXT,
+      created_at   TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(week_ending, member_name, file_name)
+    );
   `);
 
   // Seed from INITIAL_CONFIG env var (or defaults) if tables are empty
@@ -200,6 +213,9 @@ async function initDb() {
   }
 
   console.log('[DB] Postgres connected and schema ready');
+
+  // Clean up stale weekly file→task connection records (older than 8 days)
+  weeklyFileTaskOps.cleanup().catch(() => {});
 }
 
 // ── Token operations ──────────────────────────────────────────────────────────
@@ -509,4 +525,29 @@ const kvOps = {
   del: (key) => q('DELETE FROM kv_store WHERE key=$1', [key]),
 };
 
-module.exports = { pool, initDb, tokenOps, userOps, channelOps, messageOps, syncOps, syncLogOps, followUpOps, summaryOps, claudeStateOps, mondayOps, kvOps };
+// ── Weekly file→task associations ─────────────────────────────────────────────
+const weeklyFileTaskOps = {
+  // Record that a file in the weekly folder came from a specific task
+  record: (weekEnding, memberName, fileName, taskId, taskName, taskStatus, statusColor) => q(`
+    INSERT INTO weekly_file_tasks
+      (week_ending, member_name, file_name, task_id, task_name, task_status, status_color)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    ON CONFLICT(week_ending, member_name, file_name)
+    DO UPDATE SET
+      task_id=EXCLUDED.task_id, task_name=EXCLUDED.task_name,
+      task_status=EXCLUDED.task_status, status_color=EXCLUDED.status_color
+  `, [weekEnding, memberName, fileName, taskId, taskName, taskStatus||null, statusColor||null]),
+
+  // Get all file→task records for a given week
+  getForWeek: (weekEnding) => qa(
+    'SELECT member_name, file_name, task_id, task_name, task_status, status_color FROM weekly_file_tasks WHERE week_ending=$1',
+    [weekEnding]
+  ),
+
+  // Delete connection records older than 8 days (keeps current week + a little buffer)
+  cleanup: () => q(
+    "DELETE FROM weekly_file_tasks WHERE created_at < NOW() - INTERVAL '8 days'"
+  ),
+};
+
+module.exports = { pool, initDb, tokenOps, userOps, channelOps, messageOps, syncOps, syncLogOps, followUpOps, summaryOps, claudeStateOps, mondayOps, kvOps, weeklyFileTaskOps };

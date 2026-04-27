@@ -1,10 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { channelOps, messageOps, syncOps, syncLogOps, tokenOps, followUpOps, summaryOps, mondayOps, kvOps, initDb, pool } = require('./db');
+const { channelOps, messageOps, syncOps, syncLogOps, tokenOps, followUpOps, summaryOps, mondayOps, kvOps, weeklyFileTaskOps, initDb, pool } = require('./db');
 const { startPoller, runSync, getSyncStatus } = require('./poller');
 const { generateSummary, getIsraelDate, getProcessingState } = require('./claude');
-const { clearBoardCache, loadBoardCacheFromDb, incrementalSync, fetchAllBoardTasks, fetchTeamTasks, fetchDailyActivity } = require('./monday_boards');
+const { clearBoardCache, loadBoardCacheFromDb, incrementalSync, fetchAllBoardTasks, fetchTeamTasks, fetchDailyActivity, fetchEmailCounts } = require('./monday_boards');
 const { encodeDropboxArg, getDropboxToken, uploadToDropbox } = require('./dropbox_lib');
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -704,6 +704,18 @@ Completed today:\n${completedList}\n\nIn progress:\n${inProgressList}\n\nDaily U
 // Weekly Report & Studio
 // ══════════════════════════════════════════════════════════════════════════════
 
+// GET /api/monday/email-counts — email tasks for Natalie/Dan from the email marketing board
+app.get('/api/monday/email-counts', async (req, res) => {
+  try {
+    const token = process.env.MONDAY_API_TOKEN;
+    if (!token) return res.status(500).json({ error: 'No Monday API token' });
+    const { week_start, week_end } = req.query;
+    if (!week_start || !week_end) return res.status(400).json({ error: 'week_start and week_end required' });
+    const counts = await fetchEmailCounts(token, week_start, week_end);
+    res.json(counts);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/monday/team-tasks — local-first: returns cache immediately, refreshes in background
 app.get('/api/monday/team-tasks', async (req, res) => {
   try {
@@ -866,7 +878,7 @@ app.post('/api/ai/team-summary', async (req, res) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set' });
-    const { tasks = [], lastWeekTasks, thisWeekTasks } = req.body;
+    const { tasks = [], lastWeekTasks, thisWeekTasks, emailCounts = {} } = req.body;
 
     const lastList = lastWeekTasks?.length ? lastWeekTasks : (lastWeekTasks == null ? tasks : [])
     const thisList = thisWeekTasks || []
@@ -882,10 +894,17 @@ app.post('/api/ai/team-summary', async (req, res) => {
     const memberMap = {}
     for (const t of activeList) {
       const key = `${t.isVideoTeam ? 'VIDEO' : 'DESIGN'}::${t.memberName}`
-      if (!memberMap[key]) memberMap[key] = { memberName: t.memberName, isVideoTeam: t.isVideoTeam, important: [], meta: [], misc: [] }
+      if (!memberMap[key]) memberMap[key] = { memberName: t.memberName, isVideoTeam: t.isVideoTeam, important: [], meta: [], misc: [], emails: 0 }
       if (isImportant(t) || isWebsiteForDesign(t)) memberMap[key].important.push(t.task.name)
       else if (isMeta(t)) memberMap[key].meta.push(t.task.name)
       else memberMap[key].misc.push(t.task.name)
+    }
+
+    // Inject email counts for Natalie and Dan
+    for (const m of Object.values(memberMap)) {
+      const n = m.memberName.toLowerCase()
+      if (n.includes('natalie') && emailCounts.natalie > 0) m.emails = emailCounts.natalie
+      else if (n.includes('dan') && emailCounts.dan > 0) m.emails = emailCounts.dan
     }
 
     // Build the task section with pre-counted buckets — no ambiguity for Claude
@@ -898,6 +917,8 @@ app.post('/api/ai/team-summary', async (req, res) => {
         lines.push(`  IMPORTANT TASKS (${m.important.length}): ${m.important.join(' | ')}`)
       if (m.meta.length > 0)
         lines.push(`  META ADS COUNT: ${m.meta.length}`)
+      if (m.emails > 0)
+        lines.push(`  EMAIL COUNT: ${m.emails}`)
       if (m.misc.length > 0)
         lines.push(`  MISC TASKS COUNT: ${m.misc.length}`)
       return lines.join('\n')
@@ -939,7 +960,7 @@ RULES:
 - Person names plain text — no asterisks, no bold.
 - Blank line between each person.
 
-BULLET RULES — maximum 2 bullets per person, no exceptions:
+BULLET RULES — maximum 3 bullets per person (only when email count is present, otherwise 2):
 
 BULLET 1 — Important tasks:
 - The input gives you a list of IMPORTANT TASKS for each person. Write them ALL in a SINGLE bullet as brief fragments separated by commas.
@@ -952,6 +973,11 @@ BULLET 2 — Other tasks count:
 - If only meta: write "N Meta ads". If only misc: write "N misc tasks". If both: write "N Meta ads + M misc tasks".
 - Do NOT name any individual tasks. The numbers are pre-counted for you — use them exactly as given.
 - If both counts are 0, skip Bullet 2.
+
+BULLET 3 — Emails (only if EMAIL COUNT is provided):
+- If the input has EMAIL COUNT for this person, add a third bullet: "N email" or "N emails".
+- Use the exact count given. Do not combine with Bullet 2.
+- If no EMAIL COUNT, skip Bullet 3.
 
 TONE:
 - Casual fragments only. No full sentences. No openers like "worked on" or "completed".
@@ -1046,6 +1072,25 @@ function weekFolder(weekEnding) {
   return `${String(index).padStart(3, '0')}_${label}`;
 }
 
+// GET /api/weekly-file-tasks — file→task associations recorded at add-time
+app.get('/api/weekly-file-tasks', async (req, res) => {
+  try {
+    const { weekEnding } = req.query;
+    if (!weekEnding) return res.status(400).json({ error: 'weekEnding required' });
+    const rows = await weeklyFileTaskOps.getForWeek(weekEnding);
+    // Shape: { memberName: { fileName: { taskId, taskName, taskStatus, statusColor } } }
+    const result = {};
+    for (const r of rows) {
+      if (!result[r.member_name]) result[r.member_name] = {};
+      result[r.member_name][r.file_name] = {
+        taskId: r.task_id, taskName: r.task_name,
+        taskStatus: r.task_status, statusColor: r.status_color,
+      };
+    }
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/dropbox/weekly-files — list files for a member's week folder
 app.get('/api/dropbox/weekly-files', async (req, res) => {
   try {
@@ -1136,7 +1181,8 @@ app.post('/api/dropbox/upload-link', async (req, res) => {
 // POST /api/dropbox/copy — copy a Dropbox file into the member's weekly folder
 app.post('/api/dropbox/copy', async (req, res) => {
   try {
-    const { filePath, sharedUrl, fileName, weekEnding, memberName } = req.body;
+    const { filePath, sharedUrl, fileName, weekEnding, memberName,
+            taskId, taskName, taskStatus, statusColor } = req.body;
     if ((!filePath && !sharedUrl) || !fileName || !weekEnding || !memberName)
       return res.status(400).json({ error: 'Missing required fields' });
     const token = await getDropboxToken();
@@ -1153,6 +1199,11 @@ app.post('/api/dropbox/copy', async (req, res) => {
       });
       if (!copyRes.ok) return res.status(500).json({ error: `Copy failed: ${await copyRes.text()}` });
       const data = await copyRes.json();
+      // Record file→task association if task info was provided
+      if (taskId && taskName) {
+        const actualName = data.metadata?.name || fileName;
+        weeklyFileTaskOps.record(weekEnding, memberName, actualName, taskId, taskName, taskStatus, statusColor).catch(() => {});
+      }
       return res.json({ success: true, path: data.metadata?.path_lower });
     }
 
@@ -1171,6 +1222,11 @@ app.post('/api/dropbox/copy', async (req, res) => {
     });
     if (!uploadRes.ok) return res.status(500).json({ error: `Upload failed: ${await uploadRes.text()}` });
     const data = await uploadRes.json();
+    // Record file→task association if task info was provided
+    if (taskId && taskName) {
+      const actualName = data.name || fileName;
+      weeklyFileTaskOps.record(weekEnding, memberName, actualName, taskId, taskName, taskStatus, statusColor).catch(() => {});
+    }
     return res.json({ success: true, path: data.path_lower });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1509,7 +1565,8 @@ app.get('/api/frameio/media-url', async (req, res) => {
 // POST /api/frameio/to-dropbox — copy a Frame.io file into the weekly Dropbox folder
 app.post('/api/frameio/to-dropbox', async (req, res) => {
   try {
-    const { fileId, fileName, weekEnding, memberName } = req.body;
+    const { fileId, fileName, weekEnding, memberName,
+            taskId, taskName, taskStatus, statusColor } = req.body;
     if (!fileId || !fileName) return res.status(400).json({ error: 'fileId and fileName required' });
     const accountId = await kvOps.get('fio_account_id');
     if (!accountId) return res.status(400).json({ error: 'No account ID stored' });
@@ -1522,7 +1579,6 @@ app.post('/api/frameio/to-dropbox', async (req, res) => {
     if (!downloadUrl) return res.status(404).json({ error: 'No download URL for this file (media_links.original was null)' });
 
     // Stream from Frame.io → Dropbox upload-session
-    // 1. Get Dropbox upload link
     const dbToken = await getDropboxToken();
     const sanitized = fileName.replace(/[^\w.\-_ ()]/g, '_');
     const basePath = (process.env.DROPBOX_PATH ?? '/Weekly Reports').replace(/\/$/, '');
@@ -1530,12 +1586,10 @@ app.post('/api/frameio/to-dropbox', async (req, res) => {
     const member = memberName || 'unknown';
     const dropboxPath = `${basePath}/${folder}/${member}/${sanitized}`;
 
-    // Fetch file from Frame.io
     const fileRes = await fetch(downloadUrl);
     if (!fileRes.ok) return res.status(502).json({ error: 'Failed to fetch file from Frame.io' });
     const fileBuffer = await fileRes.arrayBuffer();
 
-    // Upload to Dropbox
     const uploadRes = await fetch('https://content.dropboxapi.com/2/files/upload', {
       method: 'POST',
       headers: {
@@ -1549,6 +1603,11 @@ app.post('/api/frameio/to-dropbox', async (req, res) => {
     });
     const uploadData = await uploadRes.json();
     if (!uploadRes.ok) return res.status(502).json({ error: uploadData?.error_summary || 'Dropbox upload failed' });
+    // Record file→task association if task info was provided
+    if (taskId && taskName) {
+      const actualName = uploadData.name || sanitized;
+      weeklyFileTaskOps.record(weekEnding, member, actualName, taskId, taskName, taskStatus, statusColor).catch(() => {});
+    }
     res.json({ success: true, path: uploadData.path_display });
   } catch (err) {
     console.error('[frameio/to-dropbox]', err);
